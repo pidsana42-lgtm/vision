@@ -1,0 +1,8 @@
+DATASET/
+__pycache__/
+.env
+*.mp4
+*.mov
+*.npy
+*.pth
+.DS_Store
