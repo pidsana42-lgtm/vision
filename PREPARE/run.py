@@ -138,6 +138,12 @@ def get_speaking_segments(video_path: str):
         talking = False
 
         if results.multi_face_landmarks:
+            # ถ้าเจอหน้าคนมากกว่า 1 หน้าในเฟรมไหนก็ตาม ให้โยนวิดีโอนี้ทิ้งไปเลย (Option 1)
+            if len(results.multi_face_landmarks) > 1:
+                print(f"\n   ⚠️ ข้ามวิดีโอนี้: พบใบหน้า {len(results.multi_face_landmarks)} คน ในเฟรมที่ {frame_idx}")
+                cap.release(); face_mesh.close()
+                return []
+
             for i, lm in enumerate(results.multi_face_landmarks):
                 dist = abs(lm.landmark[13].y - lm.landmark[14].y)
                 face_hist.setdefault(i, []).append(dist)
@@ -302,7 +308,7 @@ def push_to_hf():
             repo_type="dataset",
             path_in_repo="dataset",
             commit_message=f"Auto-pipeline: เพิ่มข้อมูลใหม่ ({time.strftime('%Y-%m-%d %H:%M')})",
-            allow_patterns=["videos/*", "labels.csv", "labels.json"]
+            allow_patterns=["videos/*", "features/*", "labels.csv", "labels.json"]
         )
         log("✅", f"พุชสำเร็จ → https://huggingface.co/datasets/{HF_REPO_ID}")
     except Exception as e:
