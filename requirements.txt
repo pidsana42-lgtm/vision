@@ -1,0 +1,12 @@
+torch
+torchvision
+torchaudio
+mediapipe
+pandas
+numpy
+opencv-python
+huggingface_hub
+yt-dlp
+openai
+moviepy
+tqdm
