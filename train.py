@@ -125,8 +125,7 @@ def ensure_features():
     print(f"  🧠 สกัดฟีเจอร์ {len(todo)} วิดีโอใหม่ (180 มิติ/เฟรม)")
     print(f"{'─'*50}")
 
-    import mediapipe.python.solutions.face_mesh as mp_face_mesh
-    face_mesh = mp_face_mesh.FaceMesh(
+    face_mesh = mp.solutions.face_mesh.FaceMesh(
         static_image_mode=False, max_num_faces=1, refine_landmarks=True,
         min_detection_confidence=0.5, min_tracking_confidence=0.5
     )
