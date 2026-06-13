@@ -225,13 +225,15 @@ def train(epochs: int = 200, batch_size: int = 2, lr: float = 5e-5,
     dataset     = LipReadingDataset(DATASET_CSV, FEATURES_DIR, tokenizer)
     train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn, drop_last=True)
 
+    from tqdm import tqdm
     # Training loop
     best_loss = float("inf")
     for epoch in range(start_epoch, epochs):
         model.train()
         total_loss = 0
 
-        for batch_idx, (features, targets, input_lengths, target_lengths) in enumerate(train_loader):
+        pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{epochs}")
+        for batch_idx, (features, targets, input_lengths, target_lengths) in enumerate(pbar):
             features = features.to(device)
             targets  = targets.to(device)
 
@@ -243,10 +245,12 @@ def train(epochs: int = 200, batch_size: int = 2, lr: float = 5e-5,
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
             total_loss += loss.item()
+            
+            pbar.set_postfix(loss=loss.item())
 
         avg_loss = total_loss / len(train_loader)
         scheduler.step(avg_loss)
-        print(f"  Epoch [{epoch+1:>4}/{epochs}]  Loss: {avg_loss:.4f}")
+        print(f"  ✅ Epoch [{epoch+1:>4}/{epochs}] เสร็จสิ้น | Avg Loss: {avg_loss:.4f}")
 
         # Save ทุก 10 epoch หรือถ้า loss ดีขึ้น
         if (epoch + 1) % 10 == 0 or avg_loss < best_loss:
