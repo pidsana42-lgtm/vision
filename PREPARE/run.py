@@ -138,15 +138,13 @@ def get_speaking_segments(video_path: str):
         talking = False
 
         if results.multi_face_landmarks:
-            # ถ้าเจอหน้าคนมากกว่า 1 หน้าในเฟรมไหนก็ตาม ให้โยนวิดีโอนี้ทิ้งไปเลย (Option 1)
+            # ถ้าเจอหน้าคนมากกว่า 1 หน้าในเฟรม ให้ถือว่าเฟรมนี้ไม่มีคนพูด (กลายเป็น Gap ทันที)
             if len(results.multi_face_landmarks) > 1:
-                print(f"\n   ⚠️ ข้ามวิดีโอนี้: พบใบหน้า {len(results.multi_face_landmarks)} คน ในเฟรมที่ {frame_idx}")
-                cap.release(); face_mesh.close()
-                return []
-
-            for i, lm in enumerate(results.multi_face_landmarks):
-                dist = abs(lm.landmark[13].y - lm.landmark[14].y)
-                face_hist.setdefault(i, []).append(dist)
+                pass 
+            else:
+                for i, lm in enumerate(results.multi_face_landmarks):
+                    dist = abs(lm.landmark[13].y - lm.landmark[14].y)
+                    face_hist.setdefault(i, []).append(dist)
                 if len(face_hist[i]) > 15: face_hist[i].pop(0)
                 if len(face_hist[i]) >= 10:
                     avg = sum(face_hist[i]) / len(face_hist[i])
