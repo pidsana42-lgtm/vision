@@ -74,7 +74,7 @@ def sync_from_hf(force: bool = False):
             repo_type="dataset",
             token=HF_TOKEN,
             local_dir=DATASET_DIR,
-            allow_patterns=["dataset/videos/*", "dataset/labels.csv", "dataset/labels.json"],
+            allow_patterns=["dataset/videos/*", "dataset/features/*", "dataset/labels.csv", "dataset/labels.json"],
             local_dir_use_symlinks=False,
         )
 
