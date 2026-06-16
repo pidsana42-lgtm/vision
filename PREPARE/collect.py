@@ -21,18 +21,60 @@ import cv2, numpy as np
 import pandas as pd
 import yt_dlp
 import mediapipe as mp
-from openai import OpenAI
+import torch
+from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
 from moviepy.editor import VideoFileClip
+from dotenv import load_dotenv
 
 # ─────────────────────────────────────────────────────────
-#  CONFIG
+#  CONFIG & MODEL INITIALIZATION
 # ─────────────────────────────────────────────────────────
-TYPHOON_API_KEY  = os.environ.get("TYPHOON_API_KEY", "")
-TYPHOON_BASE_URL = "https://api.opentyphoon.ai/v1"
+GLOBAL_ASR_PIPE = None
 
-if not TYPHOON_API_KEY:
-    print('❌ ไม่พบ TYPHOON_API_KEY — กรุณารัน: export TYPHOON_API_KEY="sk-xxx..."')
-    raise SystemExit(1)
+def init_asr_pipe():
+    global GLOBAL_ASR_PIPE
+    if GLOBAL_ASR_PIPE is not None:
+        return GLOBAL_ASR_PIPE
+
+    print("\n[INIT] 🚀 กำลังโหลดโมเดล Typhoon-Whisper Large v3 (อาจใช้เวลาสักครู่ในครั้งแรก)...")
+    if torch.backends.mps.is_available():
+        device = "mps"
+        torch_dtype = torch.float16
+    elif torch.cuda.is_available():
+        device = "cuda:0"
+        torch_dtype = torch.bfloat16
+    else:
+        device = "cpu"
+        torch_dtype = torch.float32
+
+    model_id = "typhoon-ai/typhoon-whisper-large-v3"
+    
+    # Load .env to get HF_TOKEN
+    env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+    load_dotenv(env_path)
+    hf_token = os.environ.get("HF_TOKEN")
+    
+    model = AutoModelForSpeechSeq2Seq.from_pretrained(
+        model_id, torch_dtype=torch_dtype, low_cpu_mem_usage=True, use_safetensors=True, token=hf_token
+    )
+    model.to(device)
+
+    processor = AutoProcessor.from_pretrained(model_id, token=hf_token)
+
+    GLOBAL_ASR_PIPE = pipeline(
+        "automatic-speech-recognition",
+        model=model,
+        tokenizer=processor.tokenizer,
+        feature_extractor=processor.feature_extractor,
+        max_new_tokens=400,
+        chunk_length_s=30,
+        batch_size=16,
+        return_timestamps=True,
+        torch_dtype=torch_dtype,
+        device=device,
+    )
+    print("[INIT] ✅ โหลดโมเดลสำเร็จ!")
+    return GLOBAL_ASR_PIPE
 
 PREPARE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_DIR = os.path.dirname(PREPARE_DIR)
@@ -130,7 +172,7 @@ def get_speaking_segments(video_path: str):
 #  STEP 3: Chunk + Transcribe
 # ─────────────────────────────────────────────────────────
 def chunk_and_transcribe(video_path: str, segments: list) -> list:
-    client = OpenAI(api_key=TYPHOON_API_KEY, base_url=TYPHOON_BASE_URL)
+    asr_pipe = init_asr_pipe()
     os.makedirs(RAW_DIR, exist_ok=True)
     video = VideoFileClip(video_path)
     results = []
@@ -158,9 +200,8 @@ def chunk_and_transcribe(video_path: str, segments: list) -> list:
             clip = video.subclip(s, e)
             clip.write_videofile(clip_path, codec="libx264", audio_codec="aac", logger=None)
             clip.audio.write_audiofile(audio_tmp, logger=None)
-            with open(audio_tmp, "rb") as f:
-                tx = client.audio.transcriptions.create(file=f, model="typhoon-asr-realtime")
-            text = tx.text.strip()
+            tx = asr_pipe(audio_tmp, generate_kwargs={"language": "thai"})
+            text = tx["text"].strip()
             if text:
                 print(f"      📝 {text[:80]}{'...' if len(text) > 80 else ''}")
                 results.append({"video": clip_name, "caption": text})

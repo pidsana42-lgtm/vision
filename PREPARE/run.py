@@ -256,6 +256,31 @@ def sync_to_dataset(new_records: list):
 # ─────────────────────────────────────────────────────────
 #  STEP 5: Extract lip features (.npy)
 # ─────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────
+#  ค่า threshold สำหรับตรวจ lip movement
+#  variance ของ lip opening ต่ำกว่านี้ = คนหน้ากล้องไม่ได้พูด
+# ─────────────────────────────────────────────────────────
+LIP_VAR_THRESHOLD = 2e-6
+
+def _lip_variance(cap, face_mesh) -> tuple[np.ndarray, float]:
+    """คืนค่า (feature array, lip_variance) สำหรับวิดีโอหนึ่งคลิป"""
+    feats, lip_openings = [], []
+    while cap.isOpened():
+        ok, img = cap.read()
+        if not ok: break
+        res = face_mesh.process(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+        if res.multi_face_landmarks:
+            lm = res.multi_face_landmarks[0]
+            # จุด 13 = ริมฝีปากบน, จุด 14 = ริมฝีปากล่าง (แกน Y)
+            lip_openings.append(abs(lm.landmark[13].y - lm.landmark[14].y))
+            pts = [c for idx in LIPS_INDICES for c in [lm.landmark[idx].x, lm.landmark[idx].y, lm.landmark[idx].z]]
+            feats.append(pts)
+        else:
+            feats.append([0.0] * (len(LIPS_INDICES) * 3))
+    var = float(np.var(lip_openings)) if lip_openings else 0.0
+    return np.array(feats), var
+
+
 def extract_features():
     os.makedirs(FEATURES_DIR, exist_ok=True)
     face_mesh = mp.solutions.face_mesh.FaceMesh(
@@ -270,28 +295,116 @@ def extract_features():
         log("✅", "ไม่มีวิดีโอใหม่ที่ต้องสกัดฟีเจอร์"); face_mesh.close(); return
 
     log("🧠", f"สกัดฟีเจอร์ {len(todos)} วิดีโอใหม่ (180 มิติ/เฟรม)")
+    rejected = []
     for vname in todos:
         vpath = os.path.join(VIDEOS_DIR, vname)
         fpath = os.path.join(FEATURES_DIR, os.path.splitext(vname)[0] + ".npy")
-        cap = cv2.VideoCapture(vpath); feats = []
-        while cap.isOpened():
-            ok, img = cap.read()
-            if not ok: break
-            res = face_mesh.process(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
-            if res.multi_face_landmarks:
-                lm  = res.multi_face_landmarks[0]
-                pts = [c for idx in LIPS_INDICES for c in [lm.landmark[idx].x, lm.landmark[idx].y, lm.landmark[idx].z]]
-                feats.append(pts)
-            else:
-                feats.append([0.0] * (len(LIPS_INDICES) * 3))
+        cap = cv2.VideoCapture(vpath)
+        arr, lip_var = _lip_variance(cap, face_mesh)
         cap.release()
-        arr = np.array(feats)
+
+        # ❌ ปากไม่ขยับเลย → น่าจะเป็นคนหลังกล้องพูด
+        if lip_var < LIP_VAR_THRESHOLD:
+            print(f"   ❌ ข้าม {vname}  (lip_var={lip_var:.2e} < {LIP_VAR_THRESHOLD:.0e}) — คนหน้ากล้องไม่ได้พูด")
+            rejected.append(vname)
+            if os.path.exists(vpath): os.remove(vpath)
+            continue
+
         if len(arr) > 0:
             np.save(fpath, arr)
-            print(f"   💾 {vname}  shape={arr.shape}")
+            print(f"   💾 {vname}  shape={arr.shape}  lip_var={lip_var:.2e}")
         else:
             print(f"   ⚠️  ข้าม {vname} (ไม่พบใบหน้า)")
+            rejected.append(vname)
+
     face_mesh.close()
+
+    # ลบ label ของคลิปที่ถูกกรองออกจาก CSV
+    if rejected and os.path.exists(DATASET_CSV):
+        df = pd.read_csv(DATASET_CSV)
+        before = len(df)
+        df = df[~df.iloc[:, 0].isin(rejected)]
+        df.to_csv(DATASET_CSV, index=False)
+        log("🧹", f"ลบ label คลิปปากไม่ขยับ {len(rejected)} ออก ({before} → {len(df)} แถว)")
+
+# ─────────────────────────────────────────────────────────
+#  STEP 5.5: ตรวจสอบคุณภาพ Dataset
+# ─────────────────────────────────────────────────────────
+def validate_dataset(delete: bool = False):
+    """
+    ตรวจสอบและกรอง label ออกตาม 3 เงื่อนไข:
+      1. ไม่มีไฟล์ .npy คู่กัน (orphan label)
+      2. Caption สั้นเกินไป (< 2 คำ)
+      3. อัตรา WPM เป็นไปไม่ได้ (> 12 คำ/วิ หรือ < 0.3 คำ/วิ)
+    """
+    if not os.path.exists(DATASET_CSV):
+        log("❌", "ไม่พบ labels.csv"); return
+
+    df = pd.read_csv(DATASET_CSV)
+    df.columns = ["video", "caption"]
+    total = len(df)
+    bad_rows = []
+
+    print(f"\n{'═'*60}")
+    print(f"  🔍 ตรวจสอบ Dataset ({total} แถว)")
+    print(f"{'═'*60}")
+
+    for i, row in df.iterrows():
+        vname   = row["video"]
+        caption = str(row["caption"]).strip()
+        reason  = None
+
+        # 1. ไม่มีไฟล์ .npy
+        npy = os.path.join(FEATURES_DIR, os.path.splitext(vname)[0] + ".npy")
+        if not os.path.exists(npy):
+            reason = "ไม่มีไฟล์ .npy"
+
+        # 2. Caption สั้นเกินไป (< 2 คำ)
+        elif len(caption.split()) < 2:
+            reason = f"caption สั้นเกิน ({len(caption.split())} คำ)"
+
+        # 3. ตรวจ WPM ถ้าวิดีโออยู่ในเครื่อง
+        else:
+            vpath = os.path.join(VIDEOS_DIR, vname)
+            if os.path.exists(vpath):
+                cap = cv2.VideoCapture(vpath)
+                fps      = cap.get(cv2.CAP_PROP_FPS) or 30
+                n_frames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+                cap.release()
+                duration = n_frames / fps if fps > 0 else 0
+                n_words  = len(caption.split())
+                wps      = n_words / duration if duration > 0 else 0
+                if wps > 12 or (wps < 0.3 and n_words > 2):
+                    reason = f"WPS={wps:.1f} ผิดปกติ ({n_words} คำ / {duration:.1f}s)"
+
+        if reason:
+            bad_rows.append(i)
+            print(f"   ❌ [{i+1}] {vname}  →  {reason}")
+            print(f"         caption: '{caption[:60]}{'...' if len(caption)>60 else ''}'")
+
+    print(f"\n  📊 ผลการตรวจ: พบปัญหา {len(bad_rows)} / {total} แถว")
+
+    if not bad_rows:
+        print("  ✅ Dataset สะอาด ไม่มีปัญหา!")
+        print(f"{'═'*60}\n")
+        return
+
+    if delete:
+        # ลบ video + npy + label
+        for i in bad_rows:
+            vname = df.at[i, "video"]
+            for path in [
+                os.path.join(VIDEOS_DIR, vname),
+                os.path.join(FEATURES_DIR, os.path.splitext(vname)[0] + ".npy")
+            ]:
+                if os.path.exists(path): os.remove(path)
+        clean = df.drop(index=bad_rows)
+        clean.to_csv(DATASET_CSV, index=False)
+        print(f"  🧹 ลบออกแล้ว {len(bad_rows)} แถว → เหลือ {len(clean)} แถวใน labels.csv")
+    else:
+        print("  ⚠️  ใช้ python3 PREPARE/run.py --validate --delete เพื่อลบออกจริง")
+    print(f"{'═'*60}\n")
+
 
 # ─────────────────────────────────────────────────────────
 #  STEP 6: Push to HuggingFace
@@ -480,6 +593,10 @@ def main():
                         help="พุชขึ้น HF อย่างเดียว (ไม่ดาวน์โหลด)")
     parser.add_argument("--clear-resume", action="store_true",
                         help="ล้าง Resume log เพื่อเริ่มใหม่ทั้งหมด")
+    parser.add_argument("--validate", action="store_true",
+                        help="ตรวจสอบคุณภาพ Dataset (orphan/caption/WPM)")
+    parser.add_argument("--delete",   action="store_true",
+                        help="ใช้คู่กับ --validate เพื่อลบ label ที่มีปัญหาออกจริง")
 
     args = parser.parse_args()
 
@@ -490,6 +607,12 @@ def main():
             print("✅ ล้าง Resume log แล้ว")
         else:
             print("ℹ️  ไม่มี Resume log")
+        return
+
+    # ── Validate Dataset ──
+    if args.validate:
+        banner("🔍 Validate Dataset Quality")
+        validate_dataset(delete=args.delete)
         return
 
     # ── Extract อย่างเดียว ──
