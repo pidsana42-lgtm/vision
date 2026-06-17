@@ -41,12 +41,23 @@ class ModelModule(LightningModule):
                 tmp_ckpt = {k.replace("encoder.",""):v for k,v in ckpt.items() if k.startswith("encoder.")}
                 self.model.encoder.load_state_dict(tmp_ckpt)
                 print("Pretrained weights of the frontend, proj_encoder and encoder component are loaded successfully.")
+                
+                # Freeze the pretrained layers so we only train CTC and Decoder
+                for param in self.model.frontend.parameters():
+                    param.requires_grad = False
+                for param in self.model.proj_encoder.parameters():
+                    param.requires_grad = False
+                for param in self.model.encoder.parameters():
+                    param.requires_grad = False
+                print("🔥 แช่แข็ง (Freeze) Frontend และ Encoder แล้ว! โมเดลจะฝึกแค่ CTC กับ Decoder ทำให้เทรนเร็วขึ้นมาก")
             else:
                 self.model.load_state_dict(ckpt)
                 print("Pretrained weights of the full model are loaded successfully.")
 
     def configure_optimizers(self):
-        optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.args.lr, weight_decay=self.args.weight_decay, betas=(0.9, 0.98))
+        # เทรนเฉพาะพารามิเตอร์ที่ไม่ได้โดน Freeze
+        trainable_params = filter(lambda p: p.requires_grad, self.model.parameters())
+        optimizer = torch.optim.AdamW(trainable_params, lr=self.args.lr, weight_decay=self.args.weight_decay, betas=(0.9, 0.98))
         scheduler = WarmupCosineScheduler(optimizer, self.args.warmup_epochs, self.args.max_epochs, len(self.trainer.datamodule.train_dataloader()) / self.trainer.num_devices / self.trainer.num_nodes)
         scheduler = {"scheduler": scheduler, "interval": "step"}
         return [optimizer], [scheduler]

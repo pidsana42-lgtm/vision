@@ -44,17 +44,17 @@ python3 PREPARE/extract.py
 
 ## ☁️ ส่วนที่ 2: การเทรนบน Google Colab / Cloud GPU
 
-เมื่อข้อมูลบน Hugging Face ครบแล้ว ให้คุณเปิด Google Colab หรือเซิร์ฟเวอร์ Cloud **เปิด GPU (T4 หรือ A100)** แล้วรันโค้ดต่อไปนี้ทีละช่องครับ:
+เนื่องจากโค้ดบนเครื่อง Mac ของคุณถูกปรับแต่งเพื่อภาษาไทยไว้สมบูรณ์แบบ 100% แล้ว เราจะดึงโค้ดทั้งหมดผ่าน GitHub ของคุณเองเลยครับ ทำให้การเทรนบน Cloud ง่ายและคลีนสุดๆ 
 
-### 1. ดาวน์โหลดโปรเจกต์และติดตั้งไลบรารี
+### 1. ดาวน์โหลดโปรเจกต์ของคุณเองและติดตั้งไลบรารี
 ```bash
-!git clone https://github.com/mpc001/auto_avsr.git
-%cd auto_avsr
+!git clone https://github.com/pidsana42-lgtm/vision.git
+%cd vision/auto_avsr
 !sudo apt-get update && sudo apt-get install -y ffmpeg
-!pip install torch torchvision torchaudio pytorch-lightning sentencepiece av opencv-python wandb huggingface_hub
+!pip install torch torchvision torchaudio torchcodec pytorch-lightning sentencepiece av opencv-python wandb huggingface_hub "numpy<2"
 ```
 
-### 1.5 ล็อคอินเข้า Hugging Face (ป้องกันการโดนจำกัดความเร็วเน็ต) 🔑
+### 2. ล็อคอินเข้า Hugging Face (ป้องกันการโดนจำกัดความเร็วเน็ต) 🔑
 > *เพื่อไม่ให้โหลด Dataset ค้าง ให้เอา Token (ที่ขึ้นต้นด้วย `hf_...`) มาใส่ในนี้แล้วรันครับ*
 ```python
 from huggingface_hub import login
@@ -66,547 +66,111 @@ login(token=HF_TOKEN)
 print("✅ เข้าสู่ระบบ Hugging Face สำเร็จ! พร้อมดาวน์โหลดด้วยความเร็วสูงสุด 🚀")
 ```
 
-### 2. ดาวน์โหลด Dataset ของคุณจาก Hugging Face
+### 3. ดาวน์โหลด Dataset และ Checkpoint
+> *เพื่อแก้ปัญหาจุกจิกเรื่องเน็ตและ Rate Limit เราจะโหลดก้อน ZIP มาแตกไฟล์เลย เร็วและชัวร์ที่สุดครับ*
+```bash
+# 1. สร้างโฟลเดอร์สำหรับเก็บ Dataset
+!mkdir -p DATASET
+
+# 2. โหลดไฟล์ทั้งหมดจาก Hugging Face
+!wget -nc https://huggingface.co/datasets/Phonsiri/Thai-Lip-Reading-Dataset/resolve/main/videos.zip
+!wget -nc https://huggingface.co/datasets/Phonsiri/Thai-Lip-Reading-Dataset/resolve/main/auto_avsr_train.csv -O DATASET/auto_avsr_train.csv
+!wget -nc https://huggingface.co/datasets/Phonsiri/Thai-Lip-Reading-Dataset/resolve/main/auto_avsr_val.csv -O DATASET/auto_avsr_val.csv
+
+# 3. แตกไฟล์วิดีโอ (ใช้ -q เพื่อซ่อนข้อความยาวๆ)
+!unzip -q -o videos.zip -d DATASET/
+```
+
 ```python
 from huggingface_hub import snapshot_download
 import os
 
-# โหลด Dataset 
-dataset_dir = snapshot_download(repo_id="Phonsiri/Thai-Lip-Reading-Dataset", repo_type="dataset")
-print(f"Dataset โหลดมาไว้ที่: {dataset_dir}")
-```
-
-### 3. ดาวน์โหลด Checkpoint (โมเดลตั้งต้น)
-```python
-# โหลด Checkpoint
+print("⏳ กำลังโหลด Checkpoint...")
 checkpoint_dir = snapshot_download(repo_id="Phonsiri/Thai-Lip-Reading-Checkpoints", repo_type="model")
-print(f"Checkpoint โหลดมาไว้ที่: {checkpoint_dir}")
+print(f"✅ Checkpoint โหลดมาไว้ที่: {checkpoint_dir}")
+dataset_dir = "DATASET"
 ```
 
-### 4. Patch โค้ดป้องกัน Error ทั้งหมด 🛠️
-> *รันเซลล์นี้เพียงครั้งเดียวเพื่อแก้ไข 2 จุดที่ไม่รองรับ PyTorch เวอร์ชันใหม่บน Colab*
-
+### 3.5. ปรับจูนรหัส (Freeze Encoder) เพื่อความเร็วและความแม่นยำ ⚡
+> *เนื่องจากการเทรนทั้งโมเดล 250 ล้านพารามิเตอร์ตั้งแต่ต้นจะใช้เวลานานและทำลายค่าน้ำหนักที่เคยเรียนรู้การอ่านปากมา ให้รันโค้ดนี้เพื่อแช่แข็ง (Freeze) ส่วนสายตาไว้ แล้วเทรนเฉพาะส่วนแปลผลภาษาไทย*
 ```python
 import os
 
-# --- ตรวจสอบพื้นที่ทำงาน (Working Directory Resolution) ---
-if os.path.exists("auto_avsr") and not os.path.exists("datamodule"):
-    os.chdir("auto_avsr")
-    print(f"🔄 ตรวจพบโฟลเดอร์โครงการ: เปลี่ยนไปรันที่ -> {os.getcwd()}")
-elif not os.path.exists("datamodule"):
-    raise FileNotFoundError("ไม่พบโฟลเดอร์ datamodule/ ในไดเรกทอรีปัจจุบัน กรุณาตรวจสอบการรัน Git Clone ใน Step 1")
+# หาระบุตำแหน่งไฟล์ lightning.py ให้เจอ
+filepath = "lightning.py"
+if not os.path.exists(filepath):
+    filepath = "auto_avsr/lightning.py"
+if not os.path.exists(filepath):
+    filepath = "/content/vision/auto_avsr/lightning.py"
 
-# --- แก้ไขที่ 1: แก้ AssertionError และปรับปรุง Dataloader ใน data_module.py ---
-# (ขยายขีดจำกัดเฟรม Validation, ลดจำนวน worker และกรองคลิปยาวเพื่อป้องกัน CUDA OOM)
-with open("datamodule/data_module.py", "r") as f:
-    code = f.read()
+if os.path.exists(filepath):
+    with open(filepath, "r", encoding="utf-8") as f:
+        code = f.read()
 
-# 1. ปลดล็อก validation limit และลด num_workers, พร้อมเซ็ต batch_size = 4
-code = code.replace(
-    "self.batch_size = batch_size",
-    "self.batch_size = 4"
-)
-
-code = code.replace(
-    "dataset = CustomBucketDataset(\n            dataset, dataset.input_lengths, 1000, 1, batch_size=self.batch_size\n        )",
-    "dataset = CustomBucketDataset(\n            dataset, dataset.input_lengths, max(1000, max(dataset.input_lengths)), 1, batch_size=self.batch_size\n        )"
-)
-
-code = code.replace(
-    "        num_workers=10,",
-    "        num_workers=2,"
-)
-
-# 2. ปรับปรุง CustomBucketDataset ให้กรองวิดีโอที่ยาวเกิน max_frames ออกอัตโนมัติ เพื่อเลี่ยงการ AssertionError และ CUDA OOM
-target_class = """class CustomBucketDataset(torch.utils.data.Dataset):
-    def __init__(
-        self, dataset, lengths, max_frames, num_buckets, shuffle=False, batch_size=None
-    ):
-        super().__init__()
-
-        assert len(dataset) == len(lengths)
-
-        self.dataset = dataset
-
-        max_length = max(lengths)
-        min_length = min(lengths)
-
-        assert max_frames >= max_length
-
-        buckets = torch.linspace(min_length, max_length, num_buckets)
-        lengths = torch.tensor(lengths)
-        bucket_assignments = torch.bucketize(lengths, buckets)
-
-        idx_length_buckets = [
-            (idx, length, bucket_assignments[idx]) for idx, length in enumerate(lengths)
-        ]
-        if shuffle:
-            idx_length_buckets = random.sample(
-                idx_length_buckets, len(idx_length_buckets)
-            )
-        else:
-            idx_length_buckets = sorted(
-                idx_length_buckets, key=lambda x: x[1], reverse=True
-            )
-        sorted_idx_length_buckets = sorted(idx_length_buckets, key=lambda x: x[2])
-        self.batches = _batch_by_token_count(
-            [(idx, length) for idx, length, _ in sorted_idx_length_buckets],
-            max_frames,
-            batch_size=batch_size,
-        )
-
-    def __getitem__(self, idx):
-        return [self.dataset[subidx] for subidx in self.batches[idx]]
-
-    def __len__(self):
-        return len(self.batches)"""
-
-replacement_class = """class CustomBucketDataset(torch.utils.data.Dataset):
-    def __init__(
-        self, dataset, lengths, max_frames, num_buckets, shuffle=False, batch_size=None
-    ):
-        super().__init__()
-
-        assert len(dataset) == len(lengths)
-
-        # Filter out samples longer than max_frames
-        valid_indices = [i for i, l in enumerate(lengths) if l <= max_frames]
-        if not valid_indices:
-            raise ValueError(f"No samples have length <= max_frames ({max_frames})")
-
-        self.dataset = dataset
-        self.lengths = [lengths[i] for i in valid_indices]
-
-        max_length = max(self.lengths)
-        min_length = min(self.lengths)
-
-        buckets = torch.linspace(min_length, max_length, num_buckets)
-        lengths_tensor = torch.tensor(self.lengths)
-        bucket_assignments = torch.bucketize(lengths_tensor, buckets)
-
-        idx_length_buckets = [
-            (idx, length, bucket_assignments[i]) for i, (idx, length) in enumerate(zip(valid_indices, self.lengths))
-        ]
-        if shuffle:
-            import random
-            idx_length_buckets = random.sample(
-                idx_length_buckets, len(idx_length_buckets)
-            )
-        else:
-            idx_length_buckets = sorted(
-                idx_length_buckets, key=lambda x: x[1], reverse=True
-            )
-        sorted_idx_length_buckets = sorted(idx_length_buckets, key=lambda x: x[2])
-        self.batches = _batch_by_token_count(
-            [(idx, length) for idx, length, _ in sorted_idx_length_buckets],
-            max_frames,
-            batch_size=batch_size,
-        )
-
-    def __getitem__(self, idx):
-        return [self.dataset[subidx] for subidx in self.batches[idx]]
-
-    def __len__(self):
-        return len(self.batches)"""
-
-code = code.replace(target_class, replacement_class)
-
-with open("datamodule/data_module.py", "w") as f:
-    f.write(code)
-print("✅ Patch 1: data_module.py สำเร็จ!")
-
-
-# --- แก้ไขที่ 2: แก้ TypeError ใน cosine.py ---
-# (ลบ argument 'verbose' ที่ถูกลบออกจาก PyTorch >= 2.2 แล้ว)
-with open("cosine.py", "r") as f:
-    code = f.read()
-
-code = code.replace(
-    "        verbose=False,\n    ):\n        self.warmup_steps = warmup_epochs * steps_per_epoch\n        self.total_steps = total_epochs * steps_per_epoch\n        super().__init__(optimizer, last_epoch=last_epoch, verbose=verbose)",
-    "    ):\n        self.warmup_steps = warmup_epochs * steps_per_epoch\n        self.total_steps = total_epochs * steps_per_epoch\n        super().__init__(optimizer, last_epoch=last_epoch)"
-)
-
-with open("cosine.py", "w") as f:
-    f.write(code)
-print("✅ Patch 2: cosine.py สำเร็จ!")
-
-# --- แก้ไขที่ 3: แก้ AttributeError และเพิ่ม Path Resolution/LFS checker ใน av_dataset.py ---
-# (ใช้ OpenCV เป็น fallback แทน torchvision.io.read_video และช่วยกู้คืนพาธกรณีโฟลเดอร์ไม่ตรง รวมถึงเช็คไฟล์ LFS pointer)
-with open("datamodule/av_dataset.py", "r") as f:
-    code = f.read()
-
-target_load = """def load_video(path):
-    \"\"\"
-    rtype: torch, T x C x H x W
-    \"\"\"
-    vid = torchvision.io.read_video(path, pts_unit="sec", output_format="THWC")[0]
-    vid = vid.permute((0, 3, 1, 2))
-    return vid"""
-
-replacement_load = """def load_video(path):
-    \"\"\"
-    rtype: torch, T x C x H x W
-    \"\"\"
-    try:
-        vid = torchvision.io.read_video(path, pts_unit="sec", output_format="THWC")[0]
-        vid = vid.permute((0, 3, 1, 2))
-        return vid
-    except (AttributeError, RuntimeError):
-        import cv2
-        import numpy as np
-        cap = cv2.VideoCapture(path)
-        frames = []
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            frames.append(frame)
-        cap.release()
-        if len(frames) == 0:
-            return torch.zeros((0, 3, 112, 112), dtype=torch.uint8)
-        vid = np.stack(frames, axis=0)
-        vid = torch.from_numpy(vid)
-        vid = vid.permute((0, 3, 1, 2))
-        return vid"""
-
-code = code.replace(target_load, replacement_load)
-
-target_getitem = """    def __getitem__(self, idx):
-        dataset_name, rel_path, input_length, token_id = self.list[idx]
-        path = os.path.join(self.root_dir, dataset_name, rel_path)
-        if self.modality == "video":
-            video = load_video(path)
-            video = self.video_transform(video)
-            return {"input": video, "target": token_id}
-        elif self.modality == "audio":
-            audio = load_audio(path)
-            audio = self.audio_transform(audio)
-            return {"input": audio, "target": token_id}"""
-
-replacement_getitem = """    def __getitem__(self, idx):
-        dataset_name, rel_path, input_length, token_id = self.list[idx]
-        path = os.path.join(self.root_dir, dataset_name, rel_path)
-        
-        if not os.path.exists(path):
-            parts = path.split(os.sep)
-            try:
-                target_subfolder = rel_path.split("/")[0]
-                idx_sub = parts.index(target_subfolder)
-                rel_path_from_sub = os.sep.join(parts[idx_sub:])
-                root_parts = parts[:idx_sub - 1]
-                root_dir = os.sep.join(root_parts)
-                if not root_dir and path.startswith(os.sep):
-                    root_dir = os.sep + root_dir
+    # แทรกโค้ด Freeze หลังจากโหลด Weights
+    old_block = """                self.model.encoder.load_state_dict(tmp_ckpt)
+                print("Pretrained weights of the frontend, proj_encoder and encoder component are loaded successfully.")
+            else:"""
                 
-                fallbacks = [
-                    os.path.join(root_dir, rel_path_from_sub),
-                    os.path.join(root_dir, "dataset", rel_path_from_sub),
-                    os.path.join(root_dir, "ready", rel_path_from_sub)
-                ]
-                for fb in fallbacks:
-                    if os.path.exists(fb):
-                        path = fb
-                        break
-            except ValueError:
-                pass
+    new_block = """                self.model.encoder.load_state_dict(tmp_ckpt)
+                print("Pretrained weights of the frontend, proj_encoder and encoder component are loaded successfully.")
                 
-        if not os.path.exists(path):
-            raise FileNotFoundError(f"File not found at: {path}")
+                # Freeze the pretrained layers so we only train CTC and Decoder
+                for param in self.model.frontend.parameters():
+                    param.requires_grad = False
+                for param in self.model.proj_encoder.parameters():
+                    param.requires_grad = False
+                for param in self.model.encoder.parameters():
+                    param.requires_grad = False
+                print("🔥 แช่แข็ง (Freeze) Frontend และ Encoder แล้ว! โมเดลจะฝึกแค่ CTC กับ Decoder")
+            else:"""
+
+    if "param.requires_grad = False" not in code:
+        code = code.replace(old_block, new_block)
+
+    # ให้ Optimizer อัปเดตเฉพาะส่วนที่ไม่ได้แช่แข็ง
+    old_opt = """    def configure_optimizers(self):
+        optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.args.lr, weight_decay=self.args.weight_decay, betas=(0.9, 0.98))"""
             
-        if os.path.getsize(path) < 1000:
-            raise ValueError(
-                f"File at {path} is too small ({os.path.getsize(path)} bytes). "
-                f"It is likely a Git LFS pointer file. Please check your dataset download on Colab."
-            )
+    new_opt = """    def configure_optimizers(self):
+        trainable_params = filter(lambda p: p.requires_grad, self.model.parameters())
+        optimizer = torch.optim.AdamW(trainable_params, lr=self.args.lr, weight_decay=self.args.weight_decay, betas=(0.9, 0.98))"""
 
-        if self.modality == "video":
-            video = load_video(path)
-            video = self.video_transform(video)
-            return {"input": video, "target": token_id}
-        elif self.modality == "audio":
-            audio = load_audio(path)
-            audio = self.audio_transform(audio)
-            return {"input": audio, "target": token_id}"""
+    code = code.replace(old_opt, new_opt)
 
-code = code.replace(target_getitem, replacement_getitem)
-
-with open("datamodule/av_dataset.py", "w") as f:
-    f.write(code)
-print("✅ Patch 3: av_dataset.py สำเร็จ!")
-
-# --- แก้ไขที่ 4: แสดงผล Loss และความแม่นยำในทุก Epoch ใน lightning.py ---
-# (เพิ่ม prog_bar=True และตัว Print ตอนจบรอบ Epoch)
-with open("lightning.py", "r") as f:
-    code = f.read()
-
-target_step = """        if step_type == "train":
-            self.log("loss", loss, on_step=True, on_epoch=True, batch_size=batch_size)
-            self.log("loss_ctc", loss_ctc, on_step=False, on_epoch=True, batch_size=batch_size, sync_dist=True)
-            self.log("loss_att", loss_att, on_step=False, on_epoch=True, batch_size=batch_size, sync_dist=True)
-            self.log("decoder_acc", acc, on_step=True, on_epoch=True, batch_size=batch_size, sync_dist=True)
-        else:
-            self.log("loss_val", loss, batch_size=batch_size, sync_dist=True)
-            self.log("loss_ctc_val", loss_ctc, batch_size=batch_size, sync_dist=True)
-            self.log("loss_att_val", loss_att, batch_size=batch_size, sync_dist=True)
-            self.log("decoder_acc_val", acc, batch_size=batch_size, sync_dist=True)
-
-        if step_type == "train":
-            self.log("monitoring_step", torch.tensor(self.global_step, dtype=torch.float32))
-
-        return loss"""
-
-replacement_step = """        if step_type == "train":
-            self.log("loss", loss, on_step=True, on_epoch=True, batch_size=batch_size, prog_bar=False)
-            self.log("loss_ctc", loss_ctc, on_step=False, on_epoch=True, batch_size=batch_size, sync_dist=True, prog_bar=True)
-            self.log("loss_att", loss_att, on_step=False, on_epoch=True, batch_size=batch_size, sync_dist=True)
-            self.log("decoder_acc", acc, on_step=True, on_epoch=True, batch_size=batch_size, sync_dist=True, prog_bar=False)
-        else:
-            self.log("loss_val", loss, batch_size=batch_size, sync_dist=True, prog_bar=True)
-            self.log("loss_ctc_val", loss_ctc, batch_size=batch_size, sync_dist=True)
-            self.log("loss_att_val", loss_att, batch_size=batch_size, sync_dist=True)
-            self.log("decoder_acc_val", acc, batch_size=batch_size, sync_dist=True, prog_bar=True)
-
-        if step_type == "train":
-            self.log("monitoring_step", torch.tensor(self.global_step, dtype=torch.float32))
-
-        return loss
-
-    def on_train_epoch_end(self):
-        metrics = self.trainer.logged_metrics
-        loss = metrics.get("loss_epoch") or metrics.get("loss")
-        if loss is not None:
-            print(f"\\n🔥 Epoch {self.current_epoch} Training Loss: {loss:.4f}")
-
-    def on_validation_epoch_end(self):
-        metrics = self.trainer.logged_metrics
-        loss_val = metrics.get("loss_val")
-        acc_val = metrics.get("decoder_acc_val")
-        if loss_val is not None:
-            acc_str = f" | Accuracy: {acc_val:.4f}" if acc_val is not None else ""
-            print(f"📊 Epoch {self.current_epoch} Validation Loss: {loss_val:.4f}{acc_str}\\n")"""
-
-code = code.replace(target_step, replacement_step)
-
-with open("lightning.py", "w") as f:
-    f.write(code)
-print("✅ Patch 4: lightning.py สำเร็จ!")
-
-# --- แก้ไขที่ 5: ปรับความถี่ในการทำ Validation เป็นทุกๆ 10 Epoch ใน train.py ---
-with open("train.py", "r") as f:
-    code = f.read()
-
-if "check_val_every_n_epoch=10" not in code:
-    code = code.replace(
-        "        reload_dataloaders_every_n_epochs=1,",
-        "        reload_dataloaders_every_n_epochs=1,\n        check_val_every_n_epoch=10,"
-    )
-    with open("train.py", "w") as f:
+    with open(filepath, "w", encoding="utf-8") as f:
         f.write(code)
-print("✅ Patch 5: train.py (Validation frequency) สำเร็จ!")
 
-# --- แก้ไขที่ 6: เปลี่ยนไปใช้พจนานุกรมภาษาไทย (ThaiTokenizer) แทนของภาษาอังกฤษ 🇹🇭 ---
-# ⚠️ สำคัญมาก: คุณต้องอัปโหลดไฟล์ vocabulary.py จากโฟลเดอร์โครงการของคุณ ขึ้นไปไว้ในโฟลเดอร์เดียวกับโปรเจกต์บน Cloud ด้วย!
-with open("datamodule/transforms.py", "r") as f:
-    code = f.read()
-
-target_text_transform = """class TextTransform:
-    def __init__(
-        self,
-        sp_model_path=SP_MODEL_PATH,
-        dict_path=DICT_PATH,
-    ):
-        self.spm = sentencepiece.SentencePieceProcessor(model_file=sp_model_path)
-        self.token_list = [line.split()[0] for line in open(dict_path, "r")]
-        self.ignore_id = -1
-
-    def tokenize(self, text):
-        tokens = self.spm.EncodeAsPieces(text)
-        token_ids = [self.token_list.index(t) for t in tokens]
-        return torch.tensor(token_ids)
-
-    def post_process(self, token_ids):
-        token_ids = token_ids[token_ids != -1]
-        text = self.spm.DecodePieces([self.token_list[t] for t in token_ids])
-        return text
-
-    def _ids_to_str(self, token_ids, char_list):
-        return self.post_process(torch.tensor(token_ids))"""
-
-replacement_text_transform = """class TextTransform:
-    \"\"\"Mapping Dictionary Class for Thai tokenization.\"\"\"
-
-    def __init__(
-        self,
-        sp_model_path=SP_MODEL_PATH,
-        dict_path=DICT_PATH,
-    ):
-        import sys
-        import os
-        # Add parent folder to sys.path to import vocabulary.py
-        sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        from vocabulary import ThaiTokenizer
-
-        self.tokenizer = ThaiTokenizer()
-        self.token_list = self.tokenizer.vocab
-        self.ignore_id = -1
-
-    def tokenize(self, text):
-        token_ids = self.tokenizer.encode(text)
-        return torch.tensor(list(map(int, token_ids)))
-
-    def post_process(self, token_ids):
-        token_ids = token_ids[token_ids != -1]
-        text = self.tokenizer.decode(token_ids.tolist())
-        return text
-
-    def _ids_to_str(self, token_ids, char_list):
-        return self.post_process(torch.tensor(token_ids))"""
-
-code = code.replace(target_text_transform, replacement_text_transform)
-
-with open("datamodule/transforms.py", "w") as f:
-    f.write(code)
-print("✅ Patch 6: transforms.py (ThaiTokenizer) สำเร็จ!")
+    print("✅ อัปเดต lightning.py เปิดระบบ Freeze สำเร็จ! ลุยเทรนต่อได้เลยครับ")
+else:
+    print("❌ หาไฟล์ไม่เจอ ลองเช็คดูว่ารัน git clone แล้วหรือยังครับ")
 ```
 
-
-
-**Patch 7: เพิ่มระบบกลับด้านวิดีโอ (Horizontal Flip Augmentation) เพื่อเบิ้ลจำนวนข้อมูล**
-```python
-with open("datamodule/transforms.py", "r") as f:
-    code = f.read()
-
-target_video_transform = """class VideoTransform:
-    def __init__(self, subset):
-        if subset == "train":
-            self.video_pipeline = torch.nn.Sequential(
-                FunctionalModule(lambda x: x / 255.0),
-                torchvision.transforms.RandomCrop(88),"""
-
-replacement_video_transform = """class RandomHorizontalFlipVideo(torch.nn.Module):
-    def __init__(self, p=0.5):
-        super().__init__()
-        self.p = p
-    def forward(self, x):
-        if random.random() < self.p:
-            return torch.flip(x, [-1])
-        return x
-
-class VideoTransform:
-    def __init__(self, subset):
-        if subset == "train":
-            self.video_pipeline = torch.nn.Sequential(
-                FunctionalModule(lambda x: x / 255.0),
-                RandomHorizontalFlipVideo(p=0.5),
-                torchvision.transforms.RandomCrop(88),"""
-
-if "RandomHorizontalFlipVideo" not in code:
-    code = code.replace(target_video_transform, replacement_video_transform)
-    with open("datamodule/transforms.py", "w") as f:
-        f.write(code)
-    print("✅ Patch 7: เพิ่ม Horizontal Flip Augmentation สำเร็จ!")
-```
-
-### 4.5 เตรียมไฟล์ Labels และแบ่งข้อมูลสำหรับ Train/Val 📊
-> *รันสคริปต์นี้เพื่อแปลง `labels.csv` ให้ตรงกับรูปแบบที่ Auto-AVSR ต้องการ (ต้องนับเฟรมวิดีโอและแปลงคำเป็นตัวเลข) และแบ่ง 80/20*
-
-```python
-import os
-import random
-import cv2
-import sys
-
-# ดึงตัวตัดคำภาษาไทยมาใช้
-sys.path.append(os.getcwd())
-from vocabulary import ThaiTokenizer
-tokenizer = ThaiTokenizer()
-
-# ชี้ไปที่โฟลเดอร์ dataset ที่พุชขึ้นไปใหม่
-data_root = os.path.join(dataset_dir, "dataset")
-
-input_csv = os.path.join(data_root, "labels.csv")
-train_csv = os.path.join(data_root, "train_labels.csv")
-val_csv = os.path.join(data_root, "val_labels.csv")
-
-with open(input_csv, "r", encoding="utf-8") as f:
-    lines = f.read().splitlines()
-
-# ข้ามบรรทัดแรกถ้าเป็น Header
-if len(lines) > 0 and lines[0].startswith("video"):
-    lines = lines[1:]
-
-random.seed(42)
-random.shuffle(lines)
-
-split_idx = int(len(lines) * 0.8)
-train_lines_raw = lines[:split_idx]
-val_lines_raw = lines[split_idx:]
-
-def process_lines(raw_lines):
-    out_lines = []
-    for line in raw_lines:
-        if "," not in line: continue
-        parts = line.split(",", 1)
-        if len(parts) != 2: continue
-        vid_name, caption = parts
-        vid_name = vid_name.strip()
-        caption = caption.strip()
-        
-        vid_path = os.path.join(data_root, "videos", vid_name)
-        if not os.path.exists(vid_path): continue
-        
-        # นับเฟรมวิดีโอ
-        cap = cv2.VideoCapture(vid_path)
-        n_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        cap.release()
-        if n_frames <= 0: continue
-        
-        # แปลงข้อความเป็น Token
-        tokens = tokenizer.encode(caption)
-        token_id_str = " ".join(map(str, tokens))
-        
-        # แปลงให้อยู่ใน Format: dataset_name, rel_path, input_length, token_id
-        dataset_name = "thai_vsr"
-        rel_path = f"videos/{vid_name}"
-        out_lines.append(f"{dataset_name},{rel_path},{n_frames},{token_id_str}")
-    return out_lines
-
-print("⏳ กำลังประมวลผล Train Set (อาจใช้เวลาสักครู่)...")
-train_ready = process_lines(train_lines_raw)
-print("⏳ กำลังประมวลผล Val Set (อาจใช้เวลาสักครู่)...")
-val_ready = process_lines(val_lines_raw)
-
-with open(train_csv, "w", encoding="utf-8") as f:
-    f.write("\n".join(train_ready) + "\n")
-with open(val_csv, "w", encoding="utf-8") as f:
-    f.write("\n".join(val_ready) + "\n")
-
-print(f"✅ เตรียมไฟล์ Train เสร็จสิ้น: {len(train_ready)} คลิป")
-print(f"✅ เตรียมไฟล์ Val เสร็จสิ้น: {len(val_ready)} คลิป")
-```
-
-### 5. เริ่มทำการเทรน (Training) 🚀
-> *คำสั่งนี้กำหนด `--max-frames 600` เพื่อหลีกเลี่ยงปัญหาหน่วยความจำการ์ดจอเต็ม (CUDA OOM), ปิดการใช้งาน WandB (`WANDB_MODE=disabled`) และตั้งค่าป้องกันหน่วยความจำแยกส่วน (`PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`)*
+### 4. เริ่มทำการเทรน (Training) 🚀
+> *โค้ดนี้สามารถรันได้เลยโดยไม่ต้องกังวลเรื่องตัวแปรแล้วครับ*
 ```bash
+# โหลดโมเดลตั้งต้นด้วย Python (ใช้ได้ทุกระบบ 100% แน่นอน)
+!python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='Phonsiri/Thai-Lip-Reading-Checkpoints', filename='vsr_trlrs2lrs3vox2avsp_base.pth', local_dir='.')"
+
+# รันเทรนโมเดล
 !PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True WANDB_MODE=disabled SLURM_JOB_ID=1 python train.py \
     --exp-dir ./exp \
     --exp-name thai_lip_reading \
     --modality video \
-    --root-dir {dataset_dir}/dataset \
-    --train-file {dataset_dir}/dataset/train_labels.csv \
-    --val-file {dataset_dir}/dataset/val_labels.csv \
+    --root-dir DATASET \
+    --train-file DATASET/auto_avsr_train.csv \
+    --val-file DATASET/auto_avsr_val.csv \
     --num-nodes 1 \
     --gpus 1 \
-    --pretrained-model-path {checkpoint_dir}/vsr_trlrs2lrs3vox2avsp_base.pth \
+    --pretrained-model-path vsr_trlrs2lrs3vox2avsp_base.pth \
     --transfer-encoder \
     --max-epochs 50 \
     --max-frames 600 \
-    --lr 1e-5 \
+    --lr 1e-3 \
     --ctc-weight 0.9
 ```
 
-### 6. ทดสอบการอ่านปาก (Inference) ระหว่าง/หลังเทรน 🎬
+### 5. ทดสอบการอ่านปาก (Inference) ระหว่าง/หลังเทรน 🎬
 > *คุณสามารถเปิดเซลล์ใหม่แล้วรันโค้ดนี้ เพื่อสุ่มวิดีโอจาก Dataset มาให้โมเดลลองอ่านปากดูได้เลยครับ (ดูพัฒนาการของมัน)*
 
 ```python
@@ -621,6 +185,8 @@ import random
 # ดึงคลาสจากโปรเจกต์
 if os.path.exists("auto_avsr"):
     os.chdir("auto_avsr")
+elif os.path.exists("vision/auto_avsr"):
+    os.chdir("vision/auto_avsr")
 sys.path.append(os.getcwd())
 
 try:
@@ -632,29 +198,25 @@ except ModuleNotFoundError:
 # 1. หาไฟล์ Checkpoint (.ckpt) ล่าสุดที่เซฟไว้
 ckpt_files = glob.glob("./exp/thai_lip_reading/*.ckpt")
 if not ckpt_files:
-    print("❌ ยังไม่มีไฟล์โมเดล (.ckpt) ถูกสร้างขึ้น กรุณารอให้เทรนจบอย่างน้อย 1 Epoch ก่อนครับ")
-else:
-    # กรองเอาเฉพาะไฟล์ที่มีคำว่า epoch (ป้องกันการไปหยิบ last.ckpt ที่โดนขัดจังหวะ)
-    epoch_ckpts = [f for f in ckpt_files if "epoch" in f]
-    if epoch_ckpts:
-        latest_ckpt = max(epoch_ckpts, key=os.path.getmtime)
-    else:
-        latest_ckpt = max(ckpt_files, key=os.path.getmtime)
-        
-    print(f"🧠 กำลังโหลดโมเดลล่าสุด: {os.path.basename(latest_ckpt)}")
+    print("❌ ไม่พบไฟล์โมเดล! กรุณาเช็คว่าได้รันการเทรนสำเร็จหรือไม่")
+    sys.exit(1)
 
-    # 2. หาโฟลเดอร์ Dataset อัตโนมัติด้วย snapshot_download
-    from huggingface_hub import snapshot_download
-    dataset_dir = snapshot_download(repo_id="Phonsiri/Thai-Lip-Reading-Dataset", repo_type="dataset")
-    video_dir = os.path.join(dataset_dir, "videos")
-    
-    videos = glob.glob(f"{video_dir}/*.mp4")
-    
-    if not videos:
-        print(f"❌ หาวิดีโอไม่เจอใน {video_dir} กรุณาตรวจสอบว่ามีไฟล์หรือไม่")
-    else:
-        test_video = random.choice(videos)
-        print(f"🎬 วิดีโอที่สุ่มมาทดสอบ: {os.path.basename(test_video)}")
+# เรียงตามเวลาแก้ไขล่าสุด (เพื่อให้ได้โมเดลรอบล่าสุดจริงๆ)
+latest_ckpt = max(ckpt_files, key=os.path.getmtime)
+        
+print(f"🧠 กำลังโหลดโมเดลล่าสุด: {os.path.basename(latest_ckpt)}")
+
+# 2. ชี้เป้าไปที่โฟลเดอร์ Dataset ที่เราเพิ่งโหลดและแตกไฟล์ไว้
+dataset_dir = "../DATASET"
+
+# ค้นหาวิดีโอทั้งหมดใน Dataset
+videos = glob.glob(f"{dataset_dir}/**/*.mp4", recursive=True)
+
+if not videos:
+    print(f"❌ หาวิดีโอไม่เจอใน {dataset_dir} เลยครับ (ลองเช็คว่ารัน unzip สำเร็จหรือไม่)")
+else:
+    test_video = random.choice(videos)
+    print(f"🎬 วิดีโอที่สุ่มมาทดสอบ: {os.path.basename(test_video)}")
         
         # 3. โหลดและแปลงวิดีโอ (Crop 88x88 และ Normalize) ด้วย OpenCV
         import cv2
@@ -705,8 +267,8 @@ else:
         print("🗣️ กำลังให้ AI อ่านปาก...")
         with torch.no_grad():
             from lightning import get_beam_search_decoder
-            # 🔥 เคล็ดลับ: ปิดการทำงานของ Decoder (ที่มักจะพังถ้าข้อมูลน้อย) แล้วใช้ความแม่นยำจาก CTC 100%
-            beam_search = get_beam_search_decoder(modelmodule.model, modelmodule.token_list, ctc_weight=1.0)
+            # เปิดใช้งาน Decoder ที่มีความแม่นยำ 24% (ใช้ ctc_weight=0.1 เพื่อให้ Decoder มีน้ำหนัก 0.9)
+            beam_search = get_beam_search_decoder(modelmodule.model, modelmodule.token_list, ctc_weight=0.1)
             
             x = modelmodule.model.frontend(vid.unsqueeze(0))
             x = modelmodule.model.proj_encoder(x)

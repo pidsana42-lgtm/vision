@@ -130,7 +130,7 @@ class DataModule(LightningDataModule):
     def train_dataloader(self):
         dataset = AVDataset(
             root_dir=self.args.root_dir,
-            label_path=os.path.join(self.args.root_dir, "labels", self.args.train_file),
+            label_path=self.args.train_file,
             subset="train",
             modality=self.args.modality,
             audio_transform=AudioTransform("train"),
@@ -155,7 +155,7 @@ class DataModule(LightningDataModule):
     def val_dataloader(self):
         dataset = AVDataset(
             root_dir=self.args.root_dir,
-            label_path=os.path.join(self.args.root_dir, "labels", self.args.val_file),
+            label_path=self.args.val_file,
             subset="val",
             modality=self.args.modality,
             audio_transform=AudioTransform("val"),
