@@ -181,8 +181,8 @@ else:
     --transfer-encoder \
     --max-epochs 50 \
     --max-frames 600 \
-    --lr 1e-3 \
-    --ctc-weight 0.9
+    --lr 1e-4 \
+    --ctc-weight 0.1
 ```
 
 ### 5. ทดสอบการอ่านปาก (Inference) ระหว่าง/หลังเทรน 🎬
