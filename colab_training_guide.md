@@ -522,9 +522,12 @@ sys.path.append(os.getcwd())
 from vocabulary import ThaiTokenizer
 tokenizer = ThaiTokenizer()
 
-input_csv = os.path.join(dataset_dir, "labels.csv")
-train_csv = os.path.join(dataset_dir, "train_labels.csv")
-val_csv = os.path.join(dataset_dir, "val_labels.csv")
+# ชี้ไปที่โฟลเดอร์ dataset ที่พุชขึ้นไปใหม่
+data_root = os.path.join(dataset_dir, "dataset")
+
+input_csv = os.path.join(data_root, "labels.csv")
+train_csv = os.path.join(data_root, "train_labels.csv")
+val_csv = os.path.join(data_root, "val_labels.csv")
 
 with open(input_csv, "r", encoding="utf-8") as f:
     lines = f.read().splitlines()
@@ -550,7 +553,7 @@ def process_lines(raw_lines):
         vid_name = vid_name.strip()
         caption = caption.strip()
         
-        vid_path = os.path.join(dataset_dir, "videos", vid_name)
+        vid_path = os.path.join(data_root, "videos", vid_name)
         if not os.path.exists(vid_path): continue
         
         # นับเฟรมวิดีโอ
@@ -590,8 +593,8 @@ print(f"✅ เตรียมไฟล์ Val เสร็จสิ้น: {len
     --exp-dir ./exp \
     --exp-name thai_lip_reading \
     --modality video \
-    --root-dir {dataset_dir} \
-    --train-file {dataset_dir}/train_labels.csv \
+    --root-dir {dataset_dir}/dataset \
+    --train-file {dataset_dir}/dataset/train_labels.csv \
     --val-file {dataset_dir}/val_labels.csv \
     --num-nodes 1 \
     --gpus 1 \
