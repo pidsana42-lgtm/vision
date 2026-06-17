@@ -64,6 +64,36 @@ class ModelModule(LightningModule):
         return predicted
 
     def validation_step(self, batch, batch_idx):
+        if batch_idx == 0:
+            # ดึงข้อมูลของวิดีโอแรกใน Batch มาจำลองการทำนายแบบเร็ว (CTC Argmax)
+            try:
+                x = self.model.frontend(batch["inputs"][0:1])
+                x = self.model.proj_encoder(x)
+                enc_feat, _ = self.model.encoder(x, None)
+                
+                # ใช้ CTC ดึงคำตอบที่น่าจะเป็นไปได้มากสุดออกมา
+                ctc_probs = self.model.ctc.log_softmax(enc_feat)
+                predicted_token_id = ctc_probs.argmax(dim=-1).squeeze(0)
+                
+                # กรองตัวซ้ำและ Blank (0) ออกตามกฎของ CTC
+                pred_list = []
+                prev = -1
+                for p in predicted_token_id.tolist():
+                    if p != prev and p != 0:
+                        pred_list.append(p)
+                    prev = p
+                
+                predicted = self.text_transform.post_process(torch.tensor(pred_list)).replace("<eos>", "")
+                
+                # ดึง Target เฉลย
+                actual_token_id = batch["targets"][0]
+                actual_token_id = actual_token_id[actual_token_id != -1] # ลบ padding
+                actual = self.text_transform.post_process(actual_token_id)
+                
+                print(f"\n[เช็คผล Validation] \n✅ เฉลย: {actual}\n🤖 โมเดลทาย: {predicted}\n")
+            except Exception as e:
+                pass # เผื่อ Error จาก Shape ไม่ตรง จะได้ไม่ทำให้เทรนล่ม
+                
         return self._step(batch, batch_idx, step_type="val")
 
     def test_step(self, sample, sample_idx):
