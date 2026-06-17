@@ -396,13 +396,13 @@ print("✅ Patch 4: lightning.py สำเร็จ!")
 with open("train.py", "r") as f:
     code = f.read()
 
-code = code.replace(
-    "        reload_dataloaders_every_n_epochs=1,",
-    "        reload_dataloaders_every_n_epochs=1,\n        check_val_every_n_epoch=10,"
-)
-
-with open("train.py", "w") as f:
-    f.write(code)
+if "check_val_every_n_epoch=10" not in code:
+    code = code.replace(
+        "        reload_dataloaders_every_n_epochs=1,",
+        "        reload_dataloaders_every_n_epochs=1,\n        check_val_every_n_epoch=10,"
+    )
+    with open("train.py", "w") as f:
+        f.write(code)
 print("✅ Patch 5: train.py (Validation frequency) สำเร็จ!")
 
 # --- แก้ไขที่ 6: เปลี่ยนไปใช้พจนานุกรมภาษาไทย (ThaiTokenizer) แทนของภาษาอังกฤษ 🇹🇭 ---
@@ -595,7 +595,7 @@ print(f"✅ เตรียมไฟล์ Val เสร็จสิ้น: {len
     --modality video \
     --root-dir {dataset_dir}/dataset \
     --train-file {dataset_dir}/dataset/train_labels.csv \
-    --val-file {dataset_dir}/val_labels.csv \
+    --val-file {dataset_dir}/dataset/val_labels.csv \
     --num-nodes 1 \
     --gpus 1 \
     --pretrained-model-path {checkpoint_dir}/vsr_trlrs2lrs3vox2avsp_base.pth \
