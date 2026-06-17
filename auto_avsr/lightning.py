@@ -96,8 +96,7 @@ class ModelModule(LightningModule):
                 
                 print(f"\n[เช็คผล Validation] \n✅ เฉลย: {actual}\n🤖 โมเดลทาย: {predicted}\n")
             except Exception as e:
-                pass # เผื่อ Error จาก Shape ไม่ตรง จะได้ไม่ทำให้เทรนล่ม
-                
+                print(f"\n[เช็คผล Validation] \n⚠️ ระบบดึงคำตอบล้มเหลว (Beam Search Error): {e}\n")
         return self._step(batch, batch_idx, step_type="val")
 
     def test_step(self, sample, sample_idx):
