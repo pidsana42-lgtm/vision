@@ -5,7 +5,7 @@ from argparse import ArgumentParser
 from average_checkpoints import ensemble
 from datamodule.data_module import DataModule
 from pytorch_lightning import seed_everything, Trainer
-from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint
+from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint, TQDMProgressBar
 from pytorch_lightning.strategies import DDPStrategy
 from pytorch_lightning.loggers import WandbLogger
 
@@ -25,7 +25,7 @@ def get_trainer(args):
         save_top_k=10,
     )
     lr_monitor = LearningRateMonitor(logging_interval="step")
-    callbacks = [checkpoint, lr_monitor]
+    callbacks = [checkpoint, lr_monitor, TQDMProgressBar(refresh_rate=50)]
 
     return Trainer(
         sync_batchnorm=True,
@@ -40,7 +40,7 @@ def get_trainer(args):
         check_val_every_n_epoch=10,
         logger=WandbLogger(name=args.exp_name, project="auto_avsr_lipreader", group=args.group_name),
         gradient_clip_val=10.0,
-        enable_progress_bar=False,
+        enable_progress_bar=True,
         log_every_n_steps=50,
     )
 
