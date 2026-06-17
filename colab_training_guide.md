@@ -232,70 +232,70 @@ if not videos:
 else:
     test_video = random.choice(videos)
     print(f"🎬 วิดีโอที่สุ่มมาทดสอบ: {os.path.basename(test_video)}")
+    
+    # 3. โหลดและแปลงวิดีโอ (Crop 88x88 และ Normalize) ด้วย OpenCV
+    import cv2
+    import numpy as np
+    
+    cap = cv2.VideoCapture(test_video)
+    frames = []
+    while True:
+        ret, frame = cap.read()
+        if not ret: break
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) # แปลงเป็นภาพขาวดำ (1 Channel)
+        frames.append(frame)
+    cap.release()
+    
+    vid_np = np.stack(frames, axis=0) # (T, H, W)
+    vid_np = np.expand_dims(vid_np, axis=-1) # (T, H, W, 1)
+    vid = torch.from_numpy(vid_np).permute((0, 3, 1, 2))  # (T, 1, H, W)
+    
+    T, C, H, W = vid.shape
+    th, tw = 88, 88
+    i = int(round((H - th) / 2.))
+    j = int(round((W - tw) / 2.))
+    vid = vid[:, :, i:i+th, j:j+tw] # Crop ตรงกลาง
+    
+    vid = vid.float() / 255.0
+    vid = (vid - 0.421) / 0.165     # Normalize
+    
+    # เตรียม Device (ย้ายไปรันบนการ์ดจอ GPU ถ้ามี)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"⚡ กำลังรันบน: {device}")
+    
+    vid = vid.to(device)
+    
+    # 4. โหลดโมเดล PyTorch Lightning
+    args = argparse.Namespace(modality="video", pretrained_model_path=None)
+    modelmodule = ModelModule(args)
+    ckpt = torch.load(latest_ckpt, map_location="cpu")
+    
+    # ดึงเฉพาะ state_dict ส่วนของ model
+    if "state_dict" in ckpt:
+        states = {k[6:]: v for k, v in ckpt["state_dict"].items() if k.startswith("model.")}
+        modelmodule.model.load_state_dict(states)
         
-        # 3. โหลดและแปลงวิดีโอ (Crop 88x88 และ Normalize) ด้วย OpenCV
-        import cv2
-        import numpy as np
+    modelmodule.to(device)
+    modelmodule.eval()
+    
+    # 5. ทำนายผล (Inference)
+    print("🗣️ กำลังให้ AI อ่านปาก...")
+    with torch.no_grad():
+        from lightning import get_beam_search_decoder
+        # เปิดใช้งาน Decoder ที่มีความแม่นยำ 24% (ใช้ ctc_weight=0.1 เพื่อให้ Decoder มีน้ำหนัก 0.9)
+        beam_search = get_beam_search_decoder(modelmodule.model, modelmodule.token_list, ctc_weight=0.1)
         
-        cap = cv2.VideoCapture(test_video)
-        frames = []
-        while True:
-            ret, frame = cap.read()
-            if not ret: break
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) # แปลงเป็นภาพขาวดำ (1 Channel)
-            frames.append(frame)
-        cap.release()
+        x = modelmodule.model.frontend(vid.unsqueeze(0))
+        x = modelmodule.model.proj_encoder(x)
+        enc_feat, _ = modelmodule.model.encoder(x, None)
+        enc_feat = enc_feat.squeeze(0)
         
-        vid_np = np.stack(frames, axis=0) # (T, H, W)
-        vid_np = np.expand_dims(vid_np, axis=-1) # (T, H, W, 1)
-        vid = torch.from_numpy(vid_np).permute((0, 3, 1, 2))  # (T, 1, H, W)
+        nbest_hyps = beam_search(enc_feat)
+        nbest_hyps = [h.asdict() for h in nbest_hyps[: min(len(nbest_hyps), 1)]]
+        predicted_token_id = torch.tensor(list(map(int, nbest_hyps[0]["yseq"][1:])))
+        prediction = modelmodule.text_transform.post_process(predicted_token_id).replace("<eos>", "")
         
-        T, C, H, W = vid.shape
-        th, tw = 88, 88
-        i = int(round((H - th) / 2.))
-        j = int(round((W - tw) / 2.))
-        vid = vid[:, :, i:i+th, j:j+tw] # Crop ตรงกลาง
-        
-        vid = vid.float() / 255.0
-        vid = (vid - 0.421) / 0.165     # Normalize
-        
-        # เตรียม Device (ย้ายไปรันบนการ์ดจอ GPU ถ้ามี)
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        print(f"⚡ กำลังรันบน: {device}")
-        
-        vid = vid.to(device)
-        
-        # 4. โหลดโมเดล PyTorch Lightning
-        args = argparse.Namespace(modality="video", pretrained_model_path=None)
-        modelmodule = ModelModule(args)
-        ckpt = torch.load(latest_ckpt, map_location="cpu")
-        
-        # ดึงเฉพาะ state_dict ส่วนของ model
-        if "state_dict" in ckpt:
-            states = {k[6:]: v for k, v in ckpt["state_dict"].items() if k.startswith("model.")}
-            modelmodule.model.load_state_dict(states)
-            
-        modelmodule.to(device)
-        modelmodule.eval()
-        
-        # 5. ทำนายผล (Inference)
-        print("🗣️ กำลังให้ AI อ่านปาก...")
-        with torch.no_grad():
-            from lightning import get_beam_search_decoder
-            # เปิดใช้งาน Decoder ที่มีความแม่นยำ 24% (ใช้ ctc_weight=0.1 เพื่อให้ Decoder มีน้ำหนัก 0.9)
-            beam_search = get_beam_search_decoder(modelmodule.model, modelmodule.token_list, ctc_weight=0.1)
-            
-            x = modelmodule.model.frontend(vid.unsqueeze(0))
-            x = modelmodule.model.proj_encoder(x)
-            enc_feat, _ = modelmodule.model.encoder(x, None)
-            enc_feat = enc_feat.squeeze(0)
-            
-            nbest_hyps = beam_search(enc_feat)
-            nbest_hyps = [h.asdict() for h in nbest_hyps[: min(len(nbest_hyps), 1)]]
-            predicted_token_id = torch.tensor(list(map(int, nbest_hyps[0]["yseq"][1:])))
-            prediction = modelmodule.text_transform.post_process(predicted_token_id).replace("<eos>", "")
-            
-        print("\n" + "🔥" * 20)
-        print(f"ผลลัพธ์ที่ AI อ่านได้: {prediction}")
-        print("🔥" * 20 + "\n")
+    print("\n" + "🔥" * 20)
+    print(f"ผลลัพธ์ที่ AI อ่านได้: {prediction}")
+    print("🔥" * 20 + "\n")
 ```

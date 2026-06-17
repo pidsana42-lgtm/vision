@@ -17,6 +17,9 @@ def compute_word_level_distance(seq1, seq2):
 class ModelModule(LightningModule):
     def __init__(self, args):
         super().__init__()
+        if isinstance(args, dict):
+            import argparse
+            args = argparse.Namespace(**args)
         self.args = args
         self.save_hyperparameters(args)
 
