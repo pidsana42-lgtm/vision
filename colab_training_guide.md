@@ -1,13 +1,69 @@
-# 🚀 คู่มือการเทรนบน Google Colab (ฉบับปรับปรุงล่าสุด)
+# 🚀 คู่มือแบบสมบูรณ์: ตั้งแต่เตรียมข้อมูล จนถึงเทรนบน Cloud
 
-เมื่อคุณย้ายไปใช้งานบน Google Colab และเปิด **GPU (T4 หรือ A100)** แล้ว ให้ก๊อปปี้โค้ดด้านล่างนี้ไปวางในแต่ละเซลล์ (Cell) แล้วกดรันทีละอันได้เลยครับ
+คู่มือนี้จะแบ่งออกเป็น **2 ส่วนหลัก** คือ:
+1. **รันบนเครื่อง Mac ของคุณ:** เพื่อดึงข้อมูล, ตัดหน้า, และเตรียมไฟล์ (เพราะทำบนเครื่องตัวเองฟรีและจัดการง่าย)
+2. **รันบน Cloud / Colab:** เพื่อใช้การ์ดจอแรงๆ (GPU) ในการเทรน AI
+
+---
+
+## 🖥️ ส่วนที่ 1: เตรียมข้อมูลบนเครื่อง Mac ของคุณ
+
+ขั้นตอนเหล่านี้ให้รันใน Terminal บนเครื่อง Mac ของคุณในโฟลเดอร์โปรเจกต์ (ม.5) ครับ
+
+### เฟส 1: ดึงคลิปจาก YouTube และแกะสับไตเติ้ล
+1. นำลิงก์ YouTube ไปวางเรียงกันในไฟล์ `PREPARE/url.txt` (บรรทัดละ 1 ลิงก์)
+2. รันคำสั่งดึงข้อมูล (โมเดล Whisper จะถอดเสียงให้):
+```bash
+python3 PREPARE/collect.py --batch PREPARE/url.txt
+```
+> วิดีโอดิบจะถูกเก็บไว้ที่ `DATASET/raw/videos` และมีไฟล์ตารางที่ `DATASET/raw/labels.csv`
+
+### เฟส 2: คัดกรองและสกัดเฉพาะภาพปาก (Mouth ROI)
+คำสั่งนี้จะครอปเฉพาะปากเป็นภาพขาวดำ 96x96 และกรองคลิปที่คุณภาพต่ำหรือประโยคสั้นเกินไปทิ้ง:
+```bash
+python3 PREPARE/extract.py
+```
+> วิดีโอที่ใช้ได้จริงจะไปอยู่ที่ `DATASET/ready/videos`
+
+### เฟส 3: แปลงคำบรรยายเป็นรหัสตัวเลข (Tokenization)
+รันคำสั่งนี้เพื่อสร้างตารางให้ AI อ่านเข้าใจ:
+```bash
+python3 PREPARE/prepare_auto_avsr.py
+```
+> จะได้ไฟล์ `DATASET/ready/auto_avsr_train.csv` (ตารางพร้อมเทรน)
+
+### เฟส 4: พุชข้อมูลขึ้น Hugging Face
+ถ้าทำเฟส 1-3 เสร็จแล้ว มีคลิปใหม่เพิ่มเข้ามา ให้อัปโหลดขึ้น Hugging Face เพื่อเอาไปเทรนบน Cloud:
+```bash
+# ถ้าตอนรัน extract.py ไม่ได้พุช หรืออยากพุชแบบบังคับ:
+python3 PREPARE/extract.py
+```
+*(ถ้ารันโค้ดผมเมื่อกี้ มันพุชให้ครบหมดแล้วครับ!)*
+
+---
+
+## ☁️ ส่วนที่ 2: การเทรนบน Google Colab / Cloud GPU
+
+เมื่อข้อมูลบน Hugging Face ครบแล้ว ให้คุณเปิด Google Colab หรือเซิร์ฟเวอร์ Cloud **เปิด GPU (T4 หรือ A100)** แล้วรันโค้ดต่อไปนี้ทีละช่องครับ:
 
 ### 1. ดาวน์โหลดโปรเจกต์และติดตั้งไลบรารี
 ```bash
 !git clone https://github.com/mpc001/auto_avsr.git
 %cd auto_avsr
 !sudo apt-get update && sudo apt-get install -y ffmpeg
-!pip install torch torchvision torchaudio pytorch-lightning sentencepiece av opencv-python wandb
+!pip install torch torchvision torchaudio pytorch-lightning sentencepiece av opencv-python wandb huggingface_hub
+```
+
+### 1.5 ล็อคอินเข้า Hugging Face (ป้องกันการโดนจำกัดความเร็วเน็ต) 🔑
+> *เพื่อไม่ให้โหลด Dataset ค้าง ให้เอา Token (ที่ขึ้นต้นด้วย `hf_...`) มาใส่ในนี้แล้วรันครับ*
+```python
+from huggingface_hub import login
+
+# ✏️ เปลี่ยนตรงนี้เป็น Token ของคุณ
+HF_TOKEN = "ใส่_TOKEN_ของคุณที่นี่"
+
+login(token=HF_TOKEN)
+print("✅ เข้าสู่ระบบ Hugging Face สำเร็จ! พร้อมดาวน์โหลดด้วยความเร็วสูงสุด 🚀")
 ```
 
 ### 2. ดาวน์โหลด Dataset ของคุณจาก Hugging Face
@@ -45,7 +101,12 @@ elif not os.path.exists("datamodule"):
 with open("datamodule/data_module.py", "r") as f:
     code = f.read()
 
-# 1. ปลดล็อก validation limit และลด num_workers
+# 1. ปลดล็อก validation limit และลด num_workers, พร้อมเซ็ต batch_size = 4
+code = code.replace(
+    "self.batch_size = batch_size",
+    "self.batch_size = 4"
+)
+
 code = code.replace(
     "dataset = CustomBucketDataset(\n            dataset, dataset.input_lengths, 1000, 1, batch_size=self.batch_size\n        )",
     "dataset = CustomBucketDataset(\n            dataset, dataset.input_lengths, max(1000, max(dataset.input_lengths)), 1, batch_size=self.batch_size\n        )"
@@ -296,10 +357,10 @@ target_step = """        if step_type == "train":
         return loss"""
 
 replacement_step = """        if step_type == "train":
-            self.log("loss", loss, on_step=True, on_epoch=True, batch_size=batch_size, prog_bar=True)
+            self.log("loss", loss, on_step=True, on_epoch=True, batch_size=batch_size, prog_bar=False)
             self.log("loss_ctc", loss_ctc, on_step=False, on_epoch=True, batch_size=batch_size, sync_dist=True, prog_bar=True)
             self.log("loss_att", loss_att, on_step=False, on_epoch=True, batch_size=batch_size, sync_dist=True)
-            self.log("decoder_acc", acc, on_step=True, on_epoch=True, batch_size=batch_size, sync_dist=True, prog_bar=True)
+            self.log("decoder_acc", acc, on_step=True, on_epoch=True, batch_size=batch_size, sync_dist=True, prog_bar=False)
         else:
             self.log("loss_val", loss, batch_size=batch_size, sync_dist=True, prog_bar=True)
             self.log("loss_ctc_val", loss_ctc, batch_size=batch_size, sync_dist=True)
@@ -411,12 +472,55 @@ print("✅ Patch 6: transforms.py (ThaiTokenizer) สำเร็จ!")
 
 
 
-### 4.5 แบ่งข้อมูลสำหรับสอน (Train) และสอบย่อย (Val) 📊
-> *รันสคริปต์นี้เพื่อแบ่ง `labels.csv` เป็น 80/20 ป้องกันไม่ให้โมเดลจำข้อสอบ (Overfitting)*
+**Patch 7: เพิ่มระบบกลับด้านวิดีโอ (Horizontal Flip Augmentation) เพื่อเบิ้ลจำนวนข้อมูล**
+```python
+with open("datamodule/transforms.py", "r") as f:
+    code = f.read()
+
+target_video_transform = """class VideoTransform:
+    def __init__(self, subset):
+        if subset == "train":
+            self.video_pipeline = torch.nn.Sequential(
+                FunctionalModule(lambda x: x / 255.0),
+                torchvision.transforms.RandomCrop(88),"""
+
+replacement_video_transform = """class RandomHorizontalFlipVideo(torch.nn.Module):
+    def __init__(self, p=0.5):
+        super().__init__()
+        self.p = p
+    def forward(self, x):
+        if random.random() < self.p:
+            return torch.flip(x, [-1])
+        return x
+
+class VideoTransform:
+    def __init__(self, subset):
+        if subset == "train":
+            self.video_pipeline = torch.nn.Sequential(
+                FunctionalModule(lambda x: x / 255.0),
+                RandomHorizontalFlipVideo(p=0.5),
+                torchvision.transforms.RandomCrop(88),"""
+
+if "RandomHorizontalFlipVideo" not in code:
+    code = code.replace(target_video_transform, replacement_video_transform)
+    with open("datamodule/transforms.py", "w") as f:
+        f.write(code)
+    print("✅ Patch 7: เพิ่ม Horizontal Flip Augmentation สำเร็จ!")
+```
+
+### 4.5 เตรียมไฟล์ Labels และแบ่งข้อมูลสำหรับ Train/Val 📊
+> *รันสคริปต์นี้เพื่อแปลง `labels.csv` ให้ตรงกับรูปแบบที่ Auto-AVSR ต้องการ (ต้องนับเฟรมวิดีโอและแปลงคำเป็นตัวเลข) และแบ่ง 80/20*
 
 ```python
 import os
 import random
+import cv2
+import sys
+
+# ดึงตัวตัดคำภาษาไทยมาใช้
+sys.path.append(os.getcwd())
+from vocabulary import ThaiTokenizer
+tokenizer = ThaiTokenizer()
 
 input_csv = os.path.join(dataset_dir, "labels.csv")
 train_csv = os.path.join(dataset_dir, "train_labels.csv")
@@ -425,20 +529,58 @@ val_csv = os.path.join(dataset_dir, "val_labels.csv")
 with open(input_csv, "r", encoding="utf-8") as f:
     lines = f.read().splitlines()
 
+# ข้ามบรรทัดแรกถ้าเป็น Header
+if len(lines) > 0 and lines[0].startswith("video"):
+    lines = lines[1:]
+
 random.seed(42)
 random.shuffle(lines)
 
 split_idx = int(len(lines) * 0.8)
-train_lines = lines[:split_idx]
-val_lines = lines[split_idx:]
+train_lines_raw = lines[:split_idx]
+val_lines_raw = lines[split_idx:]
+
+def process_lines(raw_lines):
+    out_lines = []
+    for line in raw_lines:
+        if "," not in line: continue
+        parts = line.split(",", 1)
+        if len(parts) != 2: continue
+        vid_name, caption = parts
+        vid_name = vid_name.strip()
+        caption = caption.strip()
+        
+        vid_path = os.path.join(dataset_dir, "videos", vid_name)
+        if not os.path.exists(vid_path): continue
+        
+        # นับเฟรมวิดีโอ
+        cap = cv2.VideoCapture(vid_path)
+        n_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        cap.release()
+        if n_frames <= 0: continue
+        
+        # แปลงข้อความเป็น Token
+        tokens = tokenizer.encode(caption)
+        token_id_str = " ".join(map(str, tokens))
+        
+        # แปลงให้อยู่ใน Format: dataset_name, rel_path, input_length, token_id
+        dataset_name = "thai_vsr"
+        rel_path = f"videos/{vid_name}"
+        out_lines.append(f"{dataset_name},{rel_path},{n_frames},{token_id_str}")
+    return out_lines
+
+print("⏳ กำลังประมวลผล Train Set (อาจใช้เวลาสักครู่)...")
+train_ready = process_lines(train_lines_raw)
+print("⏳ กำลังประมวลผล Val Set (อาจใช้เวลาสักครู่)...")
+val_ready = process_lines(val_lines_raw)
 
 with open(train_csv, "w", encoding="utf-8") as f:
-    f.write("\n".join(train_lines) + "\n")
+    f.write("\n".join(train_ready) + "\n")
 with open(val_csv, "w", encoding="utf-8") as f:
-    f.write("\n".join(val_lines) + "\n")
+    f.write("\n".join(val_ready) + "\n")
 
-print(f"✅ สร้างไฟล์ Train: {len(train_lines)} คลิป")
-print(f"✅ สร้างไฟล์ Val: {len(val_lines)} คลิป")
+print(f"✅ เตรียมไฟล์ Train เสร็จสิ้น: {len(train_ready)} คลิป")
+print(f"✅ เตรียมไฟล์ Val เสร็จสิ้น: {len(val_ready)} คลิป")
 ```
 
 ### 5. เริ่มทำการเทรน (Training) 🚀
@@ -457,5 +599,123 @@ print(f"✅ สร้างไฟล์ Val: {len(val_lines)} คลิป")
     --transfer-encoder \
     --max-epochs 50 \
     --max-frames 600 \
-    --lr 1e-4
+    --lr 1e-5 \
+    --ctc-weight 0.9
+```
+
+### 6. ทดสอบการอ่านปาก (Inference) ระหว่าง/หลังเทรน 🎬
+> *คุณสามารถเปิดเซลล์ใหม่แล้วรันโค้ดนี้ เพื่อสุ่มวิดีโอจาก Dataset มาให้โมเดลลองอ่านปากดูได้เลยครับ (ดูพัฒนาการของมัน)*
+
+```python
+import os
+import glob
+import torch
+import torchvision
+import sys
+import argparse
+import random
+
+# ดึงคลาสจากโปรเจกต์
+if os.path.exists("auto_avsr"):
+    os.chdir("auto_avsr")
+sys.path.append(os.getcwd())
+
+try:
+    from lightning import ModelModule
+except ModuleNotFoundError:
+    print("❌ ไม่พบไฟล์ lightning.py! กรุณาตรวจสอบว่าคุณอยู่ในโฟลเดอร์ auto_avsr แล้ว")
+    sys.exit(1)
+
+# 1. หาไฟล์ Checkpoint (.ckpt) ล่าสุดที่เซฟไว้
+ckpt_files = glob.glob("./exp/thai_lip_reading/*.ckpt")
+if not ckpt_files:
+    print("❌ ยังไม่มีไฟล์โมเดล (.ckpt) ถูกสร้างขึ้น กรุณารอให้เทรนจบอย่างน้อย 1 Epoch ก่อนครับ")
+else:
+    # กรองเอาเฉพาะไฟล์ที่มีคำว่า epoch (ป้องกันการไปหยิบ last.ckpt ที่โดนขัดจังหวะ)
+    epoch_ckpts = [f for f in ckpt_files if "epoch" in f]
+    if epoch_ckpts:
+        latest_ckpt = max(epoch_ckpts, key=os.path.getmtime)
+    else:
+        latest_ckpt = max(ckpt_files, key=os.path.getmtime)
+        
+    print(f"🧠 กำลังโหลดโมเดลล่าสุด: {os.path.basename(latest_ckpt)}")
+
+    # 2. หาโฟลเดอร์ Dataset อัตโนมัติด้วย snapshot_download
+    from huggingface_hub import snapshot_download
+    dataset_dir = snapshot_download(repo_id="Phonsiri/Thai-Lip-Reading-Dataset", repo_type="dataset")
+    video_dir = os.path.join(dataset_dir, "videos")
+    
+    videos = glob.glob(f"{video_dir}/*.mp4")
+    
+    if not videos:
+        print(f"❌ หาวิดีโอไม่เจอใน {video_dir} กรุณาตรวจสอบว่ามีไฟล์หรือไม่")
+    else:
+        test_video = random.choice(videos)
+        print(f"🎬 วิดีโอที่สุ่มมาทดสอบ: {os.path.basename(test_video)}")
+        
+        # 3. โหลดและแปลงวิดีโอ (Crop 88x88 และ Normalize) ด้วย OpenCV
+        import cv2
+        import numpy as np
+        
+        cap = cv2.VideoCapture(test_video)
+        frames = []
+        while True:
+            ret, frame = cap.read()
+            if not ret: break
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) # แปลงเป็นภาพขาวดำ (1 Channel)
+            frames.append(frame)
+        cap.release()
+        
+        vid_np = np.stack(frames, axis=0) # (T, H, W)
+        vid_np = np.expand_dims(vid_np, axis=-1) # (T, H, W, 1)
+        vid = torch.from_numpy(vid_np).permute((0, 3, 1, 2))  # (T, 1, H, W)
+        
+        T, C, H, W = vid.shape
+        th, tw = 88, 88
+        i = int(round((H - th) / 2.))
+        j = int(round((W - tw) / 2.))
+        vid = vid[:, :, i:i+th, j:j+tw] # Crop ตรงกลาง
+        
+        vid = vid.float() / 255.0
+        vid = (vid - 0.421) / 0.165     # Normalize
+        
+        # เตรียม Device (ย้ายไปรันบนการ์ดจอ GPU ถ้ามี)
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f"⚡ กำลังรันบน: {device}")
+        
+        vid = vid.to(device)
+        
+        # 4. โหลดโมเดล PyTorch Lightning
+        args = argparse.Namespace(modality="video", pretrained_model_path=None)
+        modelmodule = ModelModule(args)
+        ckpt = torch.load(latest_ckpt, map_location="cpu")
+        
+        # ดึงเฉพาะ state_dict ส่วนของ model
+        if "state_dict" in ckpt:
+            states = {k[6:]: v for k, v in ckpt["state_dict"].items() if k.startswith("model.")}
+            modelmodule.model.load_state_dict(states)
+            
+        modelmodule.to(device)
+        modelmodule.eval()
+        
+        # 5. ทำนายผล (Inference)
+        print("🗣️ กำลังให้ AI อ่านปาก...")
+        with torch.no_grad():
+            from lightning import get_beam_search_decoder
+            # 🔥 เคล็ดลับ: ปิดการทำงานของ Decoder (ที่มักจะพังถ้าข้อมูลน้อย) แล้วใช้ความแม่นยำจาก CTC 100%
+            beam_search = get_beam_search_decoder(modelmodule.model, modelmodule.token_list, ctc_weight=1.0)
+            
+            x = modelmodule.model.frontend(vid.unsqueeze(0))
+            x = modelmodule.model.proj_encoder(x)
+            enc_feat, _ = modelmodule.model.encoder(x, None)
+            enc_feat = enc_feat.squeeze(0)
+            
+            nbest_hyps = beam_search(enc_feat)
+            nbest_hyps = [h.asdict() for h in nbest_hyps[: min(len(nbest_hyps), 1)]]
+            predicted_token_id = torch.tensor(list(map(int, nbest_hyps[0]["yseq"][1:])))
+            prediction = modelmodule.text_transform.post_process(predicted_token_id).replace("<eos>", "")
+            
+        print("\n" + "🔥" * 20)
+        print(f"ผลลัพธ์ที่ AI อ่านได้: {prediction}")
+        print("🔥" * 20 + "\n")
 ```

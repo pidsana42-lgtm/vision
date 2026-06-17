@@ -86,11 +86,23 @@ class AddNoise(torch.nn.Module):
         return noisy_speech.t()
 
 
+class RandomHorizontalFlipVideo(torch.nn.Module):
+    def __init__(self, p=0.5):
+        super().__init__()
+        self.p = p
+
+    def forward(self, x):
+        # x: [T, C, H, W]
+        if random.random() < self.p:
+            return torch.flip(x, [-1])
+        return x
+
 class VideoTransform:
     def __init__(self, subset):
         if subset == "train":
             self.video_pipeline = torch.nn.Sequential(
                 FunctionalModule(lambda x: x / 255.0),
+                RandomHorizontalFlipVideo(p=0.5),
                 torchvision.transforms.RandomCrop(88),
                 torchvision.transforms.Grayscale(),
                 AdaptiveTimeMask(10, 25),

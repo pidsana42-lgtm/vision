@@ -170,13 +170,13 @@ def extract_one(video_path: str, detector, cropper: MouthCropper):
     return sequence, lip_var, multi_face_count
 
 def check_caption(caption: str, duration: float) -> str | None:
-    words = caption.strip().split()
-    n_words = len(words)
-    if n_words < 2: return f"caption สั้นเกิน ({n_words} คำ)"
+    # สำหรับภาษาไทย ให้นับเป็น "ตัวอักษร" แทนการนับ "คำ" ด้วยการเว้นวรรค
+    n_chars = len(caption.replace(" ", "").strip())
+    if n_chars < 5: return f"caption สั้นเกิน ({n_chars} ตัวอักษร)"
     if duration > 0:
-        wps = n_words / duration
-        if wps > 12: return f"WPS สูงเกิน ({wps:.1f} คำ/วิ)"
-        if wps < 0.3 and n_words > 2: return f"WPS ต่ำเกิน ({wps:.1f} คำ/วิ)"
+        cps = n_chars / duration # Characters Per Second
+        if cps > 50: return f"พูดเร็วเกิน/ซับผิด ({cps:.1f} ตัวอักษร/วิ)"
+        if cps < 2 and n_chars > 10: return f"พูดช้าเกิน/ซับผิด ({cps:.1f} ตัวอักษร/วิ)"
     return None
 
 def get_video_duration(video_path: str) -> float:
@@ -239,6 +239,12 @@ def run_extract(no_push: bool = False):
         if sequence is None or len(sequence) == 0:
             print(f"         ❌ ไม่พบใบหน้า / ไม่สามารถ crop ได้")
             rejected_counts["no_face"] += 1
+            continue
+
+        if mf_count > 10:
+            print(f"         ❌ มีหลายหน้าในจอ ({mf_count} เฟรม) เสี่ยงครอปผิดคน")
+            rejected_counts.setdefault("multi_face", 0)
+            rejected_counts["multi_face"] += 1
             continue
 
         # Save MP4 96x96 grayscale

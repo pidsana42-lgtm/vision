@@ -5,7 +5,9 @@ Format ของ Auto-AVSR: dataset,basename,video_length,token_id_str
 """
 import os
 import sys
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(base_dir)
+sys.path.append(os.path.join(base_dir, "auto_avsr"))
 import cv2
 import pandas as pd
 
