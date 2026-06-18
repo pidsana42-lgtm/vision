@@ -423,3 +423,67 @@ api.upload_folder(
 )
 print("✅ อัพโหลดเสร็จสิ้น ปลอดภัย 100%!")
 ```
+
+### 5. วิธีรันเทรนต่อ (Resume) ถ้าเผลอกดหยุดหรือรัน Inference ไปแล้ว
+ถ้าคุณหยุดเทรนกลางคัน (เช่นหยุดตอน Epoch 9) แล้วอยากเทรนต่อ **ห้ามรันโค้ดข้อ 3 ซ้ำเด็ดขาด เพราะมันจะเริ่มใหม่จาก 0!** ให้รันโค้ดนี้แทน:
+
+> **⚠️ ข้อควรระวัง:** ถ้าคุณเพิ่งรันโค้ดทดสอบ (Inference) มาก่อนหน้านี้ การ์ดจอจะเต็ม (`CUDA out of memory`) ให้คุณไปที่เมนูบนสุดของ Colab เลือก **Runtime > Restart session** (หรือ Kernel > Restart Kernel) เพื่อล้างการ์ดจอก่อน ค่อยรันเทรนต่อนะครับ!
+
+```bash
+%%bash
+cd /teamspace/studios/this_studio/vision/auto_avsr
+
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True WANDB_MODE=disabled SLURM_JOB_ID=1 python train.py \
+    --exp-dir ./exp \
+    --exp-name thai_lip_reading_phase2 \
+    --modality video \
+    --root-dir DATASET \
+    --train-file DATASET/auto_avsr_train.csv \
+    --val-file DATASET/auto_avsr_val.csv \
+    --num-nodes 1 \
+    --gpus 1 \
+    --max-epochs 500 \
+    --max-frames 3200 \
+    --lr 5e-5 \
+    --ctc-weight 0.15 \
+    --ckpt-path exp/thai_lip_reading_phase2/last.ckpt
+```
+
+### 6. วิธีเทรน Phase 2 ต่อบนเครื่องใหม่ (Colab/Cloud เครื่องใหม่)
+ถ้าเครื่องเดิมหมดอายุ แล้วคุณไปเปิดเครื่องใหม่ ให้ทำตามนี้เพื่อดึงงานเดิมมาเทรนต่อ:
+
+1. รัน **ส่วนที่ 1 และ 2** (โคลน Git, ลงแพ็คเกจ, และรันสคริปต์โหลด Dataset) ให้เรียบร้อย
+2. รันเซลล์ Python ด้านล่างนี้ เพื่อดึงโฟลเดอร์ Phase 2 ที่พุชไว้กลับลงมา:
+```python
+import os
+import shutil
+from huggingface_hub import snapshot_download, login
+
+# ถ้าจำเป็นต้องล็อกอิน
+# login("ใส่_TOKEN_ตรงนี้") 
+
+repo_id = "Phonsiri/Thai-Lip-Reading-Checkpoints"
+print("⏳ กำลังดาวน์โหลดความคืบหน้า Phase 2 กลับมาจาก Hugging Face...")
+
+# โหลดโฟลเดอร์ phase2_unfreeze มาไว้ที่โฟลเดอร์ปัจจุบันชั่วคราว
+snapshot_download(
+    repo_id=repo_id, 
+    allow_patterns="phase2_unfreeze/*", 
+    local_dir="."
+)
+
+# ย้ายเข้าไปในโครงสร้าง exp ของโมเดลเพื่อให้รัน Resume ต่อได้เลย
+target_dir = "/teamspace/studios/this_studio/vision/auto_avsr/exp/thai_lip_reading_phase2"
+os.makedirs(os.path.dirname(target_dir), exist_ok=True)
+
+if os.path.exists("phase2_unfreeze"):
+    if os.path.exists(target_dir):
+        shutil.rmtree(target_dir) # ลบของเก่าถ้ามี
+    shutil.move("phase2_unfreeze", target_dir)
+    print("✅ ย้ายโฟลเดอร์เสร็จสิ้น! พร้อมรันเทรนต่อได้เลย")
+else:
+    print("❌ หาโฟลเดอร์ที่ดาวน์โหลดไม่เจอ!")
+```
+
+3. จากนั้น รันโค้ด Bash ใน **ข้อ 5** ด้านบน เพื่อสั่งเทรน (Resume) ต่อได้เลยครับ โมเดลจะอ่านไฟล์ `last.ckpt` จากโฟลเดอร์ที่เพิ่งโหลดมา แล้วสานต่องานทันที!
+
