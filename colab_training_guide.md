@@ -355,3 +355,71 @@ else:
     print(f"🤖 ผลลัพธ์ที่ AI อ่านได้: {prediction}")
     print("🔥" * 20 + "\n")
 ```
+
+---
+
+## 🧠 เฟสลับ: Phase 2 (Unfreeze ปลดล็อกพลังตาให้เรียนรู้ภาษาไทย)
+
+หลังจากเทรน Phase 1 ไปประมาณ 15-20 Epochs จน Loss เริ่มนิ่ง (สมองเรียนรู้ไวยากรณ์ไทยได้แล้ว) ให้เราทำการ Unfreeze (ปลดล็อกตา) เพื่อให้มันเริ่มเชื่อมโยงรูปปากคนไทยเข้ากับคำครับ
+
+### 1. สกัดก้อนความรู้เดิมเพื่อเตรียมเป็น Base ให้ Phase 2
+รันโค้ดนี้ใน Cell ใหม่ เพื่อดึง Weights ออกมาจาก `last.ckpt` เพียวๆ (ป้องกันบั๊ก Optimizer):
+```python
+import os
+import torch
+
+if not os.getcwd().endswith('auto_avsr'):
+    %cd /teamspace/studios/this_studio/vision/auto_avsr
+
+print("กำลังสกัดความรู้ (Weights) ออกมาจาก Checkpoint เก่า...")
+ckpt = torch.load('exp/thai_lip_reading/last.ckpt', map_location='cpu')
+
+# ตัดคำว่า 'model.' ออกเพื่อให้โหลดเข้าโมเดลตรงๆ ได้
+state_dict = {k.replace('model.', ''): v for k, v in ckpt['state_dict'].items()}
+torch.save(state_dict, 'unfreeze_base.pth')
+print("✅ สร้างไฟล์ unfreeze_base.pth สำเร็จ!")
+```
+
+### 2. อัพเดตโค้ด `lightning.py` เพื่อปลดล็อก (Unfreeze)
+เปลี่ยนโค้ดตรง `transfer_encoder` และ `configure_optimizers` ใน `auto_avsr/lightning.py` เพื่อให้มันไม่ Freeze ตาอีกต่อไป (สามารถเอา Comment `#` ออกตรงส่วนที่เคย Freeze ไว้) และรับประกันว่า Loss จะไม่พัง.
+
+### 3. รันเทรน Phase 2
+รัน Cell นี้เพื่อเริ่มเทรน Phase 2 (สังเกตว่าเปลี่ยนชื่อโฟลเดอร์เป็น `thai_lip_reading_phase2` และลด LR ลงเพื่อความชัวร์):
+```bash
+%%bash
+cd /teamspace/studios/this_studio/vision/auto_avsr
+
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True WANDB_MODE=disabled SLURM_JOB_ID=1 python train.py \
+    --exp-dir ./exp \
+    --exp-name thai_lip_reading_phase2 \
+    --modality video \
+    --root-dir DATASET \
+    --train-file DATASET/auto_avsr_train.csv \
+    --val-file DATASET/auto_avsr_val.csv \
+    --num-nodes 1 \
+    --gpus 1 \
+    --pretrained-model-path unfreeze_base.pth \
+    --max-epochs 500 \
+    --max-frames 3200 \
+    --lr 5e-5 \
+    --ctc-weight 0.15 
+```
+
+### 4. อัพโหลด Phase 2 ขึ้น Hugging Face
+เพื่อไม่ให้ทับกับโมเดลเดิม ให้รันโค้ดนี้เพื่อ Push แบบแยกโฟลเดอร์:
+```python
+import os
+from huggingface_hub import HfApi
+
+api = HfApi()
+repo_id = "Phonsiri/Thai-Lip-Reading-Checkpoints"
+
+print(f"กำลังอัพโหลดก้อนโมเดล Phase 2 ไปยัง {repo_id}...")
+api.upload_folder(
+    folder_path="/teamspace/studios/this_studio/vision/auto_avsr/exp/thai_lip_reading_phase2",
+    repo_id=repo_id,
+    path_in_repo="phase2_unfreeze", 
+    repo_type="model"
+)
+print("✅ อัพโหลดเสร็จสิ้น ปลอดภัย 100%!")
+```
