@@ -45,14 +45,14 @@ class ModelModule(LightningModule):
                 self.model.encoder.load_state_dict(tmp_ckpt)
                 print("Pretrained weights of the frontend, proj_encoder and encoder component are loaded successfully.")
                 
-                # Freeze the pretrained layers so we only train CTC and Decoder
-                for param in self.model.frontend.parameters():
-                    param.requires_grad = False
-                for param in self.model.proj_encoder.parameters():
-                    param.requires_grad = False
-                for param in self.model.encoder.parameters():
-                    param.requires_grad = False
-                print("🔥 แช่แข็ง (Freeze) Frontend และ Encoder แล้ว! โมเดลจะฝึกแค่ CTC กับ Decoder ทำให้เทรนเร็วขึ้นมาก")
+                # 🔥 Phase 2: UNFREEZE (ปลดล็อกทุกส่วนให้เรียนรู้ภาษาไทยเต็มที่!)
+                # for param in self.model.frontend.parameters():
+                #     param.requires_grad = False
+                # for param in self.model.proj_encoder.parameters():
+                #     param.requires_grad = False
+                # for param in self.model.encoder.parameters():
+                #     param.requires_grad = False
+                print("🚀 ปลดล็อก (Unfreeze) พลังทั้งหมดแล้ว! โมเดลกำลังฝึกอ่านปากด้วยสายตาตัวเอง")
             else:
                 self.model.load_state_dict(ckpt)
                 print("Pretrained weights of the full model are loaded successfully.")
