@@ -285,16 +285,52 @@ def run_extract(no_push: bool = False):
 def _push_to_hf():
     log("🚀", f"กำลังพุชขึ้น HuggingFace: {HF_REPO_ID}")
     api = HfApi(token=HF_TOKEN)
+    zip_path = os.path.join(PROJECT_DIR, "videos.zip")
+    
     try:
-        api.upload_folder(
-            folder_path=READY_DIR,
+        # Run Tokenization to generate auto_avsr_train.csv
+        log("⚙️", "กำลังแปลงข้อมูลเป็น Token (เตรียมไฟล์ auto_avsr_train.csv)...")
+        import subprocess
+        subprocess.run([sys.executable, os.path.join(PROJECT_DIR, "PREPARE", "prepare_auto_avsr.py")], check=True)
+        
+        train_csv_path = os.path.join(READY_DIR, "auto_avsr_train.csv")
+        
+        log("📦", "กำลังแพ็กโฟลเดอร์วิดีโอเป็น videos.zip (อาจใช้เวลาสักครู่)...")
+        shutil.make_archive(os.path.join(PROJECT_DIR, "videos"), 'zip', READY_DIR, "videos")
+        
+        log("☁️", "กำลังอัปโหลด videos.zip...")
+        api.upload_file(
+            path_or_fileobj=zip_path,
+            path_in_repo="videos.zip",
             repo_id=HF_REPO_ID,
             repo_type="dataset",
-            path_in_repo="dataset",
-            commit_message=f"Phase 2: อัปเดต Dataset (Mouth ROI 96x96)",
-            allow_patterns=["videos/*", "labels.csv"],
+            commit_message="Phase 2: อัปเดต videos.zip"
         )
+        
+        log("☁️", "กำลังอัปโหลด auto_avsr_train.csv...")
+        api.upload_file(
+            path_or_fileobj=train_csv_path,
+            path_in_repo="auto_avsr_train.csv",
+            repo_id=HF_REPO_ID,
+            repo_type="dataset",
+            commit_message="Phase 2: อัปเดต auto_avsr_train.csv"
+        )
+        
+        log("☁️", "กำลังอัปโหลด auto_avsr_val.csv...")
+        api.upload_file(
+            path_or_fileobj=train_csv_path,
+            path_in_repo="auto_avsr_val.csv",
+            repo_id=HF_REPO_ID,
+            repo_type="dataset",
+            commit_message="Phase 2: อัปเดต auto_avsr_val.csv"
+        )
+
+        
         log("✅", f"พุชสำเร็จ → https://huggingface.co/datasets/{HF_REPO_ID}")
+        # ลบไฟล์ zip ทิ้งเพื่อประหยัดพื้นที่ใน Mac
+        if os.path.exists(zip_path):
+            os.remove(zip_path)
+            
     except Exception as e:
         log("❌", f"พุชล้มเหลว: {e}")
 

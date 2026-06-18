@@ -8,9 +8,38 @@ from pytorch_lightning import seed_everything, Trainer
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint, TQDMProgressBar
 from pytorch_lightning.strategies import DDPStrategy
 from pytorch_lightning.loggers import WandbLogger
+from pytorch_lightning.callbacks import Callback
+from huggingface_hub import HfApi
 
+class HuggingFacePushCallback(Callback):
+    def __init__(self, repo_id="Phonsiri/Thai-Lip-Reading-Checkpoints", every_n_epochs=50):
+        super().__init__()
+        self.repo_id = repo_id
+        self.every_n_epochs = every_n_epochs
+        self.api = HfApi()
 
-# Set environment variables and logger level
+    def on_train_epoch_end(self, trainer, pl_module):
+        if (trainer.current_epoch + 1) % self.every_n_epochs == 0:
+            ckpt_path = trainer.checkpoint_callback.last_model_path
+            if not ckpt_path or not os.path.exists(ckpt_path):
+                # Fallback
+                ckpt_path = os.path.join(trainer.checkpoint_callback.dirpath, "last.ckpt")
+                if not os.path.exists(ckpt_path):
+                    ckpt_path = os.path.join(trainer.checkpoint_callback.dirpath, "last-v1.ckpt")
+            
+            if ckpt_path and os.path.exists(ckpt_path):
+                filename = f"epoch_{trainer.current_epoch + 1}.ckpt"
+                try:
+                    print(f"\n🚀 [HF Push] กำลังอัพโหลด Checkpoint ไปที่ {self.repo_id} (Epoch {trainer.current_epoch + 1})...")
+                    self.api.upload_file(
+                        path_or_fileobj=ckpt_path,
+                        path_in_repo=filename,
+                        repo_id=self.repo_id,
+                        repo_type="model"
+                    )
+                    print("✅ อัพโหลดขึ้น Hugging Face สำเร็จ!\n")
+                except Exception as e:
+                    print(f"❌ อัพโหลดล้มเหลว (กรุณาเช็ค HF_TOKEN): {e}\n")# Set environment variables and logger level
 # logging.basicConfig(level=logging.WARNING)
 
 
@@ -25,7 +54,8 @@ def get_trainer(args):
         save_top_k=10,
     )
     lr_monitor = LearningRateMonitor(logging_interval="step")
-    callbacks = [checkpoint, lr_monitor, TQDMProgressBar(refresh_rate=50)]
+    hf_push_callback = HuggingFacePushCallback(every_n_epochs=10)
+    callbacks = [checkpoint, lr_monitor, TQDMProgressBar(refresh_rate=50), hf_push_callback]
 
     return Trainer(
         sync_batchnorm=True,
