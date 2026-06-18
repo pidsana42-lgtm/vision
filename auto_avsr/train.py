@@ -54,7 +54,7 @@ def get_trainer(args):
         save_top_k=10,
     )
     lr_monitor = LearningRateMonitor(logging_interval="step")
-    hf_push_callback = HuggingFacePushCallback(every_n_epochs=10)
+    hf_push_callback = HuggingFacePushCallback(every_n_epochs=5)
     callbacks = [checkpoint, lr_monitor, TQDMProgressBar(refresh_rate=50), hf_push_callback]
 
     return Trainer(
